@@ -7,6 +7,19 @@ selects the default. The Rust adapter uses the complete CPython C API, so each
 binary is built for one minor series and architecture. This is not an abi3
 binary or a free-threaded build.
 
+## Building from source
+
+Use `make build PYNOX_PYTHON_VERSION=3.14` to select a supported minor, or pass an
+exact version listed in `.python-versions`. Changing the selection rebuilds
+`target/release/pynox` for that Python. Use the same selection with `make test`
+to run the tests in a matching environment.
+
+For a custom CPython installation, set `PYO3_PYTHON=/path/to/python` when building.
+It must be CPython 3.11–3.15 with the GIL and a shared libpython. Release bundles
+require the exact checked-in pins and a clean Python distribution.
+
+## Release bundles
+
 Release bundles contain:
 
 ```text
