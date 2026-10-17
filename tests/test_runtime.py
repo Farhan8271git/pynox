@@ -97,6 +97,25 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(result["error"]["file"], str(self.script))
         self.assertEqual(result["error"]["line"], 1)
 
+    def test_script_arguments_cannot_grant_runtime_permissions(self):
+        args = [
+            f"--allow-read={self.secret}",
+            "--allow-network",
+            "--timeout=1m",
+            "--optimize-json",
+            "--max-output=1",
+        ]
+        result = self.run_code(
+            f"import json, sys\nprint(json.dumps(sys.argv[1:]))\nopen({str(self.secret)!r}).read()",
+            args=args,
+        )
+        self.assert_denied(result)
+        self.assertEqual(json.loads(result["stdout"]), args)
+        self.assertEqual(result["policy"]["allow_read"], [])
+        self.assertEqual(result["policy"]["network"], "deny")
+        self.assertEqual(result["policy"]["timeout_ms"], 5000)
+        self.assertFalse(result["policy"]["optimize_json"])
+
     def test_allow_read_single_file(self):
         result = self.run_code(
             f"print(open({str(self.secret)!r}).read())",

@@ -8,7 +8,7 @@ build/test pins for 3.11–3.15 are in `.python-versions`.
 make setup
 make build
 make check
-uv run --locked --group integration pytest
+make test
 make docs
 make bundle
 ```
@@ -30,8 +30,13 @@ Small Python bootstraps integrate with CPython. Preserve ordinary Python APIs
 and document every behavior difference. Keep framework dependencies in optional
 test groups; never add them to the shipped runtime.
 
-Tests exercise the actual kernel, native calls and child processes. Do not
-replace permission checks with mocks or silently skip unsupported hosts.
+Rust unit tests live in `tests/rust/`, separate from implementation files.
+Run them with `make test-rust`; `make test` also runs the Python integration
+suite. CI runs both suites for every Python/architecture combination.
+See [the test guide](tests/README.md) for the coverage split.
+
+Python integration tests exercise the actual kernel, native calls and child
+processes. Do not replace permission checks with mocks or silently skip unsupported hosts.
 Optimization tests need a stock CPython reference, values/errors/side effects,
 memory and complete-workload timing. Run comparable lifecycles.
 

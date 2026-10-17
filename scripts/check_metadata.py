@@ -40,7 +40,7 @@ def main():
         assert "on" in data and "permissions" in data, source
         for action in re.findall(r"^\s*(?:-\s*)?uses:\s*(\S+)", source.read_text(), re.M):
             assert action.startswith("./") or re.search(r"@[a-f0-9]{40}$", action), (source, action)
-    for directory in (ROOT, ROOT / "docs", ROOT / "ADR"):
+    for directory in (ROOT, ROOT / "docs", ROOT / "ADR", ROOT / "tests"):
         for source in directory.glob("*.md"):
             for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", source.read_text()):
                 if "://" in target or target.startswith("#"):

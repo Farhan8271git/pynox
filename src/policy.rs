@@ -1,7 +1,11 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
+
+#[cfg(test)]
+#[path = "../tests/rust/policy.rs"]
+mod tests;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -38,11 +42,9 @@ pub struct Cli {
     /// Maximum captured bytes per stream; excess output is drained and discarded.
     #[arg(long, default_value = "65536", value_parser = clap::value_parser!(u64).range(1..=16_777_216))]
     pub max_output: u64,
-    /// Python script; only this file is implicitly readable.
-    pub script: PathBuf,
-    /// Arguments passed to the script.
-    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-    pub args: Vec<String>,
+    /// Python script followed by its arguments; only the script is implicitly readable.
+    #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_names = ["SCRIPT", "ARGS"])]
+    pub command: Vec<OsString>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -98,7 +100,10 @@ impl Policy {
         if !(1..=16_777_216).contains(&cli.max_output) {
             bail!("max_output must be between 1 and 16777216 bytes");
         }
-        let script = cli.script.canonicalize().context("Cannot resolve script")?;
+        let (script, args) = cli.command.split_first().context("Script is required")?;
+        let script = PathBuf::from(script)
+            .canonicalize()
+            .context("Cannot resolve script")?;
         if !script.is_file() {
             bail!("Script must be a regular file");
         }
@@ -143,7 +148,14 @@ impl Policy {
             allow_network: cli.allow_network,
             optimize_json: cli.optimize_json,
             script,
-            args: cli.args.clone(),
+            args: args
+                .iter()
+                .map(|arg| {
+                    arg.to_str()
+                        .context("Script arguments must be UTF-8")
+                        .map(str::to_owned)
+                })
+                .collect::<Result<_>>()?,
             allow_read: resolve(&cli.allow_read)?,
             allow_write: resolve(&cli.allow_write)?,
             package_dirs,

@@ -1,4 +1,4 @@
-.PHONY: setup build check test docs bundle clean distclean
+.PHONY: setup build check test test-rust docs bundle clean distclean
 PYNOX_PYTHON_VERSION ?= $(shell cat .python-version)
 export PYNOX_PYTHON_VERSION
 UV_PYTHON ?= $(or $(PYO3_PYTHON),$(PYNOX_PYTHON_VERSION))
@@ -13,7 +13,9 @@ check:
 	uv run --locked ruff check src tests scripts examples
 	uv run --locked ruff format --check src tests scripts examples
 	uv run --locked python scripts/check_metadata.py
-test: build
+test-rust:
+	bash scripts/build.sh --test
+test: build test-rust
 	uv run --locked --group integration pytest
 docs:
 	uv run --locked python scripts/prepare_docs.py

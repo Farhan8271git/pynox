@@ -59,6 +59,8 @@ jobs:
       - run: uv sync --locked --group integration
       - run: make build
       - run: bash scripts/build.sh --check
+      - name: Rust policy, protocol, capture and diagnostic tests
+        run: make test-rust
       - name: Check kernel support
         run: ./target/release/pynox doctor
       - name: Kernel, lifecycle, CPython and framework contracts

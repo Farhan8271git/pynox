@@ -18,6 +18,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
+#[path = "../tests/rust/capture.rs"]
+mod tests;
+
 pub fn pipe() -> Result<(File, File)> {
     let mut fds = [-1; 2];
     if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {

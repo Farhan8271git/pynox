@@ -21,6 +21,10 @@ use std::{
 
 const MAX_REQUEST: usize = 1_048_576;
 
+#[cfg(test)]
+#[path = "../tests/rust/pool.rs"]
+mod tests;
+
 #[derive(Parser)]
 #[command(
     name = "pynox pool",
@@ -81,8 +85,9 @@ impl Request {
         let cli = Cli {
             allow_network: self.allow_network,
             optimize_json: self.optimize_json,
-            script: self.script,
-            args: self.args,
+            command: std::iter::once(self.script.into_os_string())
+                .chain(self.args.into_iter().map(Into::into))
+                .collect(),
             allow_read: self.allow_read,
             allow_write: self.allow_write,
             package_dir: self.package_dirs,

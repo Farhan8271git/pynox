@@ -11,8 +11,9 @@ if [[ -z "${PYO3_PYTHON:-}" ]]; then
     fi
     export PYO3_PYTHON
 fi
-if [[ "${1:-}" == "--check" ]]; then
-    cargo clippy --locked --all-targets -- -D warnings
-else
-    cargo build --release --locked
-fi
+case "${1:-}" in
+    --check) cargo clippy --locked --all-targets -- -D warnings ;;
+    --test) cargo test --locked --all-targets ;;
+    "") cargo build --release --locked ;;
+    *) echo "Usage: bash scripts/build.sh [--check|--test]" >&2; exit 2 ;;
+esac

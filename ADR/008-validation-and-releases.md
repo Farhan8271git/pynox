@@ -17,7 +17,8 @@ pinned GitHub Actions, Dependabot, Zensical and tag-driven releases.
 
 Archive original research with source/result hashes outside the active source
 tree. Retain useful behavioral probes and document provenance. Use locked Cargo
-and uv dependencies, format/lint checks, real-kernel integration tests,
+and uv dependencies, format/lint checks, Rust unit tests in `tests/rust/`,
+real-kernel integration tests,
 differential CPython tests and optional framework smoke tests.
 
 CI covers Linux x86_64/aarch64, documentation and relocated release artifacts.

@@ -11,6 +11,8 @@ native optimizations. Agents are one workload, not the entire product.
 - Optimize measured costs; compare equal lifecycles and record regressions/memory.
 - Pool reuse is explicit. Never reuse task globals or fork the threaded supervisor.
 - Keep Cargo.lock, uv.lock, version metadata, docs and ADRs consistent.
+- Keep Rust tests in `tests/rust/`; implementation modules only reference them
+  with `#[cfg(test)]` and `#[path]`, without inline test bodies.
 - Use `make build`, `make check`, `uv run --locked --group integration pytest`,
   `make docs`, `make bundle`, and `uv run --locked python scripts/check_install.py`
   as appropriate to the change.

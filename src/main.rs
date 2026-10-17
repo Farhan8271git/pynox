@@ -14,6 +14,10 @@ mod runtime;
 mod sandbox;
 mod worker;
 
+#[cfg(test)]
+#[path = "../tests/rust/diagnostics.rs"]
+mod tests;
+
 use anyhow::{Context, Result};
 use clap::Parser;
 use policy::{python_info, Cli, Policy};

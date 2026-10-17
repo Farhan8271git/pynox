@@ -5,11 +5,12 @@
 ![Linux x86_64 / aarch64](https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-lightgrey)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-Your Python, with a sandbox by default and Rust under the hood.
+**Let your agents run Python. Keep control of each task.**
 
-Pynox runs ordinary Python on **CPython**, with Rust handling execution control
-and selected native optimizations. Use it for scripts, data processing,
-automation and agent tools.
+Pynox gives AI agents a controlled way to run real Python: permissions per
+task, resource limits and structured results. It runs ordinary Python on
+**CPython**, with Rust handling execution control and selected native
+optimizations. The same runtime serves your scripts, data jobs and automation.
 
 > 🚧 **Pre-alpha (0.1.0).** Ready to try, experiment and contribute.
 > Interfaces and sandbox policies are still evolving; this is not a production release.
@@ -19,7 +20,7 @@ automation and agent tools.
 - **Keep writing Python** — Familiar `.py` files, imports and libraries.
 - **Sandbox by default** — Choose which files, environment variables and network access a script gets.
 - **Control each run** — Set time, memory and output limits.
-- **Get useful results** — JSON output with captured stdout, exit status, timing and error details.
+- **Fit your agent loop** — JSON results with captured stdout, exit status, timing and structured errors.
 - **Reuse startup work** — A worker pool keeps Python ready and gives each job fresh process state.
 - **Bring your dependencies** — Install the packages you need. Pynox bundles its Python runtime, without application frameworks.
 
@@ -84,9 +85,13 @@ pynox --allow-network --allow-env=API_KEY app.py
 Network access is off by default. The flag enables IPv4/IPv6; host Unix sockets
 and subprocesses stay blocked.
 
-## Run repeated jobs
+## Connect an agent to the worker pool
 
-Keep Python initialized across jobs with a worker pool:
+Use Pynox as the execution tool in your agent loop. Your application chooses
+each task's permissions; the agent receives a result it can inspect to decide
+its next step. No framework-specific SDK is required.
+
+Start a pool once to keep Python initialized across tool calls:
 
 ```bash
 pynox pool --workers=2
@@ -95,8 +100,19 @@ pynox pool --workers=2
 After the `ready` event, send one JSON request per line:
 
 ```json
-{"id":"hello","script":"examples/hello.py","timeout":"2s"}
+{"id":"tool-42","script":"examples/hello.py","timeout":"2s","memory":"128m","max_output":8192}
 ```
+
+Result, with timing and policy metadata omitted here:
+
+```json
+{"id":"tool-42","exit":0,"stdout":"Hello from Pynox\n","error":null}
+```
+
+Use `id` to match the tool call and `exit` to check its outcome. On failure,
+`error` carries a type and message, plus source location and a hint when
+available. The agent can use those details to revise its code or explain
+what went wrong.
 
 Each job runs in a fresh child process with its own permissions. Results carry
 the request ID and may arrive out of order. Python globals are not shared
@@ -158,6 +174,13 @@ see [installation options](docs/distribution.md).
 
 Try your scripts, report unexpected behavior and help us measure real workloads.
 The [contributor guide](CONTRIBUTING.md) covers setup, checks and releases.
+
+```bash
+make test-rust  # Rust unit tests in tests/rust/
+make test      # Rust + Python integration tests
+```
+
+See the [test guide](tests/README.md) for coverage and Python version selection.
 
 ## Documentation
 

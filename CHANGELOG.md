@@ -11,6 +11,10 @@
 - Integrate an opt-in, bounded `json.dump` fast path without changing scripts.
 - Provide explicit unrestricted CPython CLI mode and a capability probe.
 - Report Pynox and the loaded CPython runtime together in `--version` / `-V`.
+- Keep flags after the script in Python's arguments, preventing them from
+  changing runtime permissions or limits.
+- Add Rust unit tests under `tests/rust/` and run them alongside Python
+  integration tests in `make test` and the CI matrix.
 - Add relocatable CPython bundles, checksum installation, ADRs and GitHub CI.
 - Build/test five Python versions on two Linux architectures and publish separate
   ABI bundles as draft prereleases; allow installed Python variants to coexist.
