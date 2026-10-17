@@ -2,7 +2,7 @@
 
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 [![CPython 3.11–3.15](https://img.shields.io/badge/CPython-3.11%E2%80%933.15-blue)](#python-versions)
-![Linux x86_64 / aarch64](https://img.shields.io/badge/Linux-x86__64%20%7C%20aarch64-lightgrey)
+![Linux and macOS](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS-lightgrey)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
 **Let your agents run Python. Keep control of each task.**
@@ -15,10 +15,19 @@ optimizations. The same runtime serves your scripts, data jobs and automation.
 > 🚧 **Pre-alpha (0.1.0).** Ready to try, experiment and contribute.
 > Interfaces and sandbox policies are still evolving; this is not a production release.
 
+| Platform | Architectures | Available modes |
+| --- | --- | --- |
+| Linux glibc | x86_64, ARM64 | Sandbox, pool and native Python |
+| Linux musl / Alpine | x86_64, ARM64 | Sandbox, pool and native Python |
+| macOS | Intel, Apple Silicon | Native Python; sandbox and pool are not available yet |
+
+Linux release builds use manylinux 2.28 and musllinux 1.2 environments.
+See [platforms and installation](docs/distribution.md) for compatibility details.
+
 ## Why Pynox?
 
 - **Keep writing Python** — Familiar `.py` files, imports and libraries.
-- **Sandbox by default** — Choose which files, environment variables and network access a script gets.
+- **Sandbox by default on Linux** — Choose which files, environment variables and network access a script gets.
 - **Control each run** — Set time, memory and output limits.
 - **Fit your agent loop** — JSON results with captured stdout, exit status, timing and structured errors.
 - **Reuse startup work** — A worker pool keeps Python ready and gives each job fresh process state.
@@ -26,7 +35,7 @@ optimizations. The same runtime serves your scripts, data jobs and automation.
 
 ## Quick start
 
-For now, build from a checkout. You'll need **Linux x86_64 or aarch64**, Rust
+For now, build from a checkout. You'll need **Linux or macOS on x86_64 or ARM64**, Rust
 and **uv >= 0.13.1**. `uv` downloads the matching Python for you.
 
 ```bash
@@ -45,7 +54,7 @@ name = "Pynox"
 print(f"Hello from {name}!")
 ```
 
-Run it in the sandbox:
+On Linux, run it in the sandbox:
 
 ```bash
 pynox hello.py
@@ -57,6 +66,16 @@ result includes the error type, message and script location when available.
 
 The sandbox requires **Landlock ABI 3 or newer**. Pynox refuses restricted
 execution if the kernel cannot enforce it. See the [sandbox guide](docs/sandbox.md).
+
+On macOS, explicitly use the native Python mode:
+
+```bash
+pynox python hello.py
+```
+
+This mode has ordinary Python output and no sandbox or resource limits.
+Sandbox and pool commands on macOS return `SandboxUnavailable` without running
+the task. They never silently fall back to unrestricted execution.
 
 ## Give scripts the access they need
 
@@ -161,12 +180,14 @@ neither Python nor Rust installed. Build and install a local bundle:
 
 ```bash
 make bundle
-bash scripts/install.sh --archive dist/pynox-0.1.0-cp311-linux-$(uname -m).tar.gz
+# Use the archive path printed by the build. Example for Linux glibc on ARM64:
+bash scripts/install.sh --archive dist/pynox-0.1.0-cp311-linux-gnu-aarch64.tar.gz
 ~/.local/bin/pynox --version
 ```
 
-The installer checks the checksum, selects the Python version from the archive
-and preserves other installed variants. Add `~/.local/bin` to your `PATH` to
+The installer checks the checksum, matches the OS, libc and architecture,
+selects Python from the archive and preserves other installed variants.
+Add `~/.local/bin` to your `PATH` to
 use the installed `pynox`. GitHub downloads require published release assets;
 see [installation options](docs/distribution.md).
 

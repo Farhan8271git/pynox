@@ -1,6 +1,7 @@
 """The same kernel and lifecycle contract also applies with a preloaded template."""
 
 import json
+import platform
 import subprocess
 import sysconfig
 import tempfile
@@ -109,6 +110,7 @@ PACKAGES = Path(sysconfig.get_path("purelib"))
     (PACKAGES / "numpy").is_dir() and (PACKAGES / "pandas").is_dir(),
     "Optional NumPy/pandas are not installed in the development environment",
 )
+@unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
 class NativePreloadTests(unittest.TestCase):
     def test_native_computation_threads_permissions_and_fresh_state(self):
         with tempfile.TemporaryDirectory(prefix="pynox-native-preload-") as temporary:

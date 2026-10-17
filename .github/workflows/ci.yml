@@ -37,10 +37,10 @@ jobs:
       - run: make check
       - run: make docs
       - name: Shell syntax
-        run: bash -n scripts/build.sh scripts/install.sh
+        run: bash -n scripts/*.sh
 
-  runtime:
-    name: Runtime (${{ matrix.runner }}, Python ${{ matrix.python }})
+  linux:
+    name: Linux (${{ matrix.libc }}, ${{ matrix.runner }}, Python ${{ matrix.python }})
     needs: matrix
     runs-on: ${{ matrix.runner }}
     env:
@@ -50,6 +50,35 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        libc: [gnu, musl]
+        python: ${{ fromJSON(needs.matrix.outputs.python) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build, test, audit and install in pinned PyPA userspace
+        run: bash scripts/ci-linux.sh "${{ matrix.libc }}" "${{ matrix.python }}"
+      - name: Upload reports and candidate bundle
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-linux-${{ matrix.libc }}-${{ matrix.runner }}-py${{ matrix.python }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  macos:
+    name: macOS (${{ matrix.host.arch }}, Python ${{ matrix.python }})
+    needs: matrix
+    runs-on: ${{ matrix.host.runner }}
+    env:
+      PYNOX_PYTHON_VERSION: ${{ matrix.python }}
+      UV_PYTHON: ${{ matrix.python }}
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - {runner: macos-15, arch: aarch64}
+          - {runner: macos-15-intel, arch: x86_64}
         python: ${{ fromJSON(needs.matrix.outputs.python) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,23 +86,21 @@ jobs:
         with:
           version: "0.13.1"
       - run: uv sync --locked --group integration
-      - run: make build
-      - run: bash scripts/build.sh --check
-      - name: Rust policy, protocol, capture and diagnostic tests
-        run: make test-rust
-      - name: Check kernel support
-        run: ./target/release/pynox doctor
-      - name: Kernel, lifecycle, CPython and framework contracts
-        run: uv run --locked --group integration pytest --junitxml="dist/tests-${PYNOX_PYTHON_VERSION}-${RUNNER_ARCH}.xml"
-      - name: Package and test relocation
-        run: uv run --locked python scripts/package.py
+      - run: make check
+      - name: Native runtime and explicit sandbox refusal
+        run: make test PYTEST_ARGS="--junitxml=dist/tests-${PYNOX_PYTHON_VERSION}-macos-${RUNNER_ARCH}.xml"
+      - name: Verify native architecture
+        run: |
+          ./target/release/pynox doctor | uv run --locked python -c 'import json,sys; assert json.load(sys.stdin)["architecture"] == "${{ matrix.host.arch }}"'
+      - name: Package, sign and test relocation
+        run: make bundle
       - name: Test installation from release assets
         run: uv run --locked python scripts/check_install.py
       - name: Upload reports and candidate bundle
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: candidate-${{ matrix.runner }}-py${{ matrix.python }}
+          name: candidate-macos-${{ matrix.host.arch }}-py${{ matrix.python }}
           path: dist/
           if-no-files-found: error
           retention-days: 7

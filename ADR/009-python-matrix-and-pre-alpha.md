@@ -4,6 +4,8 @@
 
 Accepted — 2026-10-17. Amends the version scope of ADRs 002, 006 and 008.
 
+ADR 010 expands the platform axis to glibc Linux, musl Linux and native macOS.
+
 ## Context
 
 Restricting builds to CPython 3.12 excludes existing applications unnecessarily.

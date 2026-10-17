@@ -9,8 +9,8 @@ make test-rust PYNOX_PYTHON_VERSION=3.15
 make test PYNOX_PYTHON_VERSION=3.15
 ```
 
-The default is Python 3.11. GitHub CI runs both suites for the five pinned
-CPython versions on Linux x86_64 and aarch64.
+The default is Python 3.11. GitHub CI covers five pinned CPython versions on
+glibc Linux, musl Linux and macOS, each on x86_64 and aarch64.
 
 ## Rust unit tests
 
@@ -23,17 +23,22 @@ logic without making it public or entering release builds.
 | [policy.rs](rust/policy.rs) | Limits, overflow, argument boundaries, environment names and permission validation |
 | [pool.rs](rust/pool.rs) | Request validation, defaults, environment separation and bounded JSONL framing |
 | [capture.rs](rust/capture.rs) | Nonblocking pipes, byte limits, draining and descriptor flags |
-| [diagnostics.rs](rust/diagnostics.rs) | Cold output capture, interrupted reads, timeout/signal precedence and structured results |
+| [diagnostics.rs](rust/diagnostics.rs) | Linux supervision: output capture, interrupted reads, timeout/signal precedence and structured results |
 
 These tests do not initialize CPython or apply a sandbox to the test runner.
 They exercise Rust logic and real pipes; kernel enforcement is checked in
 separate processes by the integration suite.
+macOS runs the portable policy unit tests; Linux also runs pool, capture and
+supervision tests.
 
 ## Python integration tests
 
 The Python tests launch the compiled Rust executable and inspect its behavior.
 They cover kernel permissions, native calls, CPython compatibility, framework
 execution and pool lifecycle, including isolation between jobs.
+On macOS, Linux kernel tests are explicitly skipped and
+[test_portability.py](test_portability.py) verifies that restricted commands
+refuse execution. Native CLI, JSON compatibility and relocation still run.
 
 With a matching binary already built, run them directly:
 

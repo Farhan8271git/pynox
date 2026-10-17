@@ -3,6 +3,8 @@
 `pynox [OPTIONS] script.py [args...]` and `pynox run ...` run one restricted
 script. Flags belong before the script; remaining arguments are Python's
 `sys.argv`. Sibling imports need an explicit readable directory.
+Restricted scripts and the pool require Linux. macOS currently supports the
+explicit `pynox python` mode; restricted requests return `SandboxUnavailable`.
 
 | Option | Meaning |
 | --- | --- |
@@ -27,8 +29,10 @@ preserves normal stdout/stderr, script / `-m` / `-c` behavior and exit status.
 The optional optimization flag must immediately follow `python`. Use `--` to
 end Pynox's prefix parsing. This mode inherits the normal environment.
 
-`pynox doctor` prints build Python, architecture and a Landlock availability
-probe. Actual execution still checks all sandbox setup steps. `--version` and
+`pynox doctor` prints build Python, OS, architecture, platform tag and separate
+`runtime_supported` / `sandbox_supported` capabilities. Linux includes a Landlock
+availability probe; macOS reports native runtime support and no sandbox.
+Actual restricted execution still checks all sandbox setup steps. `--version` and
 `-V` report both Pynox and the loaded CPython runtime, without initializing Python:
 
 ```text

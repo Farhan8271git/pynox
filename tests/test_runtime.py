@@ -42,6 +42,7 @@ def deny_landlock():
         os._exit(99)
 
 
+@unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
 class RuntimeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

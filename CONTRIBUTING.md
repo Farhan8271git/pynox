@@ -1,7 +1,9 @@
 # Contributing to Pynox
 
-Use the Rust toolchain in `rust-toolchain.toml`, uv >= 0.13.1 and a Linux host with
-Landlock ABI >= 3. Default Python (3.11) is pinned in `.python-version`; the five
+Use the Rust toolchain in `rust-toolchain.toml` and uv >= 0.13.1 on Linux or macOS.
+Linux sandbox tests require Landlock ABI >= 3. macOS builds need Apple's command
+line developer tools and test native mode plus explicit sandbox refusal.
+Default Python (3.11) is pinned in `.python-version`; the five
 build/test pins for 3.11–3.15 are in `.python-versions`.
 
 ```bash
@@ -32,7 +34,8 @@ test groups; never add them to the shipped runtime.
 
 Rust unit tests live in `tests/rust/`, separate from implementation files.
 Run them with `make test-rust`; `make test` also runs the Python integration
-suite. CI runs both suites for every Python/architecture combination.
+suite. CI runs the applicable tests for every Python/platform combination:
+glibc Linux, musl Linux and macOS, each on x86_64 and ARM64.
 See [the test guide](tests/README.md) for the coverage split.
 
 Python integration tests exercise the actual kernel, native calls and child
@@ -50,14 +53,14 @@ format used in pydynox. Keep user-facing policy documentation in sync.
 2. Regenerate Cargo.lock / uv.lock if affected and pass `make check`, tests,
    docs and relocated bundle tests across `.python-versions`. Keep every pin explicit.
 3. Push the reviewed change to main. A `vX.Y.Z` tag triggers release CI.
-4. CI reruns validation for all five Pythons on Linux x86_64/aarch64, checks tag
-   against Cargo version and uploads ten bundles plus checksums to a **draft
+4. CI reruns validation for all five Pythons across six native platforms, checks tag
+   against Cargo version and uploads thirty bundles plus checksums to a **draft
    prerelease**. Pynox remains pre-alpha even when CPython itself is stable.
 5. Review the draft's assets and notes, then publish it.
 
 The workflow derives its repository from GitHub context. Creating/configuring
 the GitHub repository, Pages and branch protection is an operator action.
-Set required checks for both architectures and quality; permit publishing only
+Set required checks for Linux, macOS and quality; permit publishing only
 after review. No PyPI package or mandatory service token is needed.
 
 Documentation uses Zensical, as pydynox does. PRs/main validate the site;

@@ -13,6 +13,9 @@ Unsupported or partially enforced Landlock configuration aborts execution.
 sandboxing; only operator-controlled modules belong there. No task may request
 preload, and writable task grants may not overlap preloaded runtime paths.
 Native extensions remain subject to their own fork/thread safety requirements.
+The Linux backend supports glibc and musl. macOS currently offers native Python
+mode only: restricted script and pool requests fail before executing task code.
+Runtime availability in `doctor` does not imply sandbox availability.
 
 The JSON diagnostic pipe is writable by the program and is not a trustworthy
 audit log against malicious code. Parent-enforced timeout and kernel rules do

@@ -15,6 +15,7 @@ explicitly marked as future work; an ambition is not an implemented feature.
 | 007 | [Structured diagnostics and explicit Python mode](007-execution-and-diagnostics.md) | Accepted |
 | 008 | [Validation and GitHub release workflow](008-validation-and-releases.md) | Accepted |
 | 009 | [CPython 3.11–3.15 and pre-alpha maturity](009-python-matrix-and-pre-alpha.md) | Accepted; amends 002, 006, 008 |
+| 010 | [Linux libc variants and native macOS](010-platforms-and-native-macos.md) | Accepted; extends 002, 003, 006, 008, 009 |
 
 New records use `NNN-short-title.md` with Status, Context, Decision,
 Alternatives considered and Consequences. Supersede decisions explicitly.

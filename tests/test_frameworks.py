@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import platform
 import subprocess
 import sys
 import sysconfig
@@ -16,6 +17,7 @@ import test_runtime as runtime
     importlib.util.find_spec("pydantic") and importlib.util.find_spec("aws_lambda_powertools"),
     "uv sync --group integration",
 )
+@unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
 class FrameworkTests(unittest.TestCase):
     def test_validation_powertools_and_asyncio_under_sandbox(self):
         doctor = json.loads(subprocess.check_output([runtime.BINARY, "doctor"]))

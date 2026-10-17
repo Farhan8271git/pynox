@@ -2,6 +2,8 @@
 
 Restricted execution is the default. `pynox python` is the explicit unrestricted
 mode; a sandbox failure never falls back to it.
+The current backend supports Linux glibc and musl. On macOS, restricted script
+and pool commands fail with `SandboxUnavailable` before executing task code.
 
 Linux Landlock ABI >= 3 mediates reads, writes and truncation. Seccomp denies
 new processes/executables, host IPC, cross-process inspection/signals, metadata

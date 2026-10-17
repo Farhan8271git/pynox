@@ -2,6 +2,7 @@
 
 import json
 import os
+import platform
 import socket
 import subprocess
 import tempfile
@@ -63,6 +64,7 @@ class ProductTests(unittest.TestCase):
                 self.assertEqual(actual["paths"]["nested"]["fast"], 1)
                 self.assertEqual(actual["paths"]["writer_custom"]["fallback"], 1)
 
+    @unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
     def test_json_differential_under_sandbox(self):
         source = runtime.ROOT / "tests/fixtures/json_contract.py"
         results = []
@@ -89,6 +91,7 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(results[0]["results"], results[1]["results"])
         self.assertEqual(results[1]["paths"]["nested"]["fast"], 1)
 
+    @unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
     def test_pool_optimization_does_not_leak_to_next_job(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -106,6 +109,7 @@ class ProductTests(unittest.TestCase):
             reports = [json.loads(line) for line in result.stdout.splitlines()][1:]
             self.assertEqual([r["stdout"] for r in reports], ["True\n", "False\n"])
 
+    @unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
     def test_network_permission_reaches_local_server(self):
         with socket.socket() as listener, tempfile.TemporaryDirectory() as temporary:
             listener.bind(("127.0.0.1", 0))

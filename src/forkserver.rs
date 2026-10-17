@@ -239,12 +239,12 @@ fn send_fds(channel: &UnixStream, fds: [RawFd; 4]) -> Result<()> {
     message.msg_iov = &mut iov;
     message.msg_iovlen = 1;
     message.msg_control = control.as_mut_ptr().cast();
-    message.msg_controllen = unsafe { libc::CMSG_SPACE(size_of::<[RawFd; 4]>() as u32) } as usize;
+    message.msg_controllen = unsafe { libc::CMSG_SPACE(size_of::<[RawFd; 4]>() as u32) } as _;
     unsafe {
         let header = libc::CMSG_FIRSTHDR(&message);
         (*header).cmsg_level = libc::SOL_SOCKET;
         (*header).cmsg_type = libc::SCM_RIGHTS;
-        (*header).cmsg_len = libc::CMSG_LEN(size_of::<[RawFd; 4]>() as u32) as usize;
+        (*header).cmsg_len = libc::CMSG_LEN(size_of::<[RawFd; 4]>() as u32) as _;
         std::ptr::copy_nonoverlapping(
             fds.as_ptr().cast::<u8>(),
             libc::CMSG_DATA(header),
@@ -268,7 +268,7 @@ fn receive_fds(channel: &UnixStream) -> Result<Option<Vec<File>>> {
     message.msg_iov = &mut iov;
     message.msg_iovlen = 1;
     message.msg_control = control.as_mut_ptr().cast();
-    message.msg_controllen = size_of_val(&control);
+    message.msg_controllen = size_of_val(&control) as _;
     let read = unsafe { libc::recvmsg(channel.as_raw_fd(), &mut message, libc::MSG_CMSG_CLOEXEC) };
     if read == 0 {
         return Ok(None);
@@ -283,7 +283,8 @@ fn receive_fds(channel: &UnixStream) -> Result<Option<Vec<File>>> {
             || header.is_null()
             || (*header).cmsg_level != libc::SOL_SOCKET
             || (*header).cmsg_type != libc::SCM_RIGHTS
-            || (*header).cmsg_len != libc::CMSG_LEN(size_of::<[RawFd; 4]>() as u32) as usize
+            || (*header).cmsg_len as usize
+                != libc::CMSG_LEN(size_of::<[RawFd; 4]>() as u32) as usize
         {
             bail!("Invalid template descriptor message");
         }

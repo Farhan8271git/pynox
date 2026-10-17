@@ -18,4 +18,7 @@
 - Add relocatable CPython bundles, checksum installation, ADRs and GitHub CI.
 - Build/test five Python versions on two Linux architectures and publish separate
   ABI bundles as draft prereleases; allow installed Python variants to coexist.
+- Extend the matrix to Linux glibc/musl and native macOS on x86_64/ARM64.
+  Use pinned manylinux/musllinux builders, audit glibc requirements, and package
+  platform-specific runtimes. macOS sandbox and pool calls fail explicitly.
 - Preserve the earlier research outside the active source tree.

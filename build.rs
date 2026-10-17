@@ -41,7 +41,11 @@ print(json.dumps({
         info["libdir"].as_str().unwrap()
     );
     // Release bundles place the matching CPython beside bin/pynox.
-    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../python/lib");
+    if env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../python/lib");
+    } else {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../python/lib");
+    }
     let destination = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("python.json");
     fs::write(destination, output.stdout).unwrap();
 }

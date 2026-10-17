@@ -1,3 +1,4 @@
+#[cfg(any(target_os = "linux", test))]
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -11,7 +12,7 @@ mod tests;
 #[command(
     version = crate::runtime::cli_version(),
     name = "pynox",
-    about = "Run Python with kernel-enforced permissions",
+    about = "Run Python with explicit execution controls",
     after_help = "Commands:\n  pynox run [OPTIONS] SCRIPT  Restricted execution (also the default)\n  pynox pool [OPTIONS]        Restricted JSONL task pool\n  pynox python [ARGS]         CPython CLI, WITHOUT sandbox\n  pynox doctor                Check runtime and kernel capabilities\n\nExperimental optimization: --optimize-json (also supported immediately after `python`)."
 )]
 pub struct Cli {
@@ -48,6 +49,7 @@ pub struct Cli {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg(any(target_os = "linux", test))]
 pub struct Policy {
     pub allow_network: bool,
     pub optimize_json: bool,
@@ -95,6 +97,7 @@ pub fn python_info() -> PythonInfo {
     info
 }
 
+#[cfg(any(target_os = "linux", test))]
 impl Policy {
     pub fn from_cli(cli: &Cli) -> Result<Self> {
         if !(1..=16_777_216).contains(&cli.max_output) {

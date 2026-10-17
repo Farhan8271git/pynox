@@ -1,6 +1,7 @@
 """Validate versions, local documentation links and pinned workflow actions."""
 
 import argparse
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -27,6 +28,13 @@ def main():
     ], pythons
     assert (ROOT / ".python-version").read_text().strip() == pythons[0]
     assert project["requires-python"] == ">=3.11,<3.16"
+    images = json.loads((ROOT / ".ci/images.json").read_text())
+    assert set(images) == {
+        f"linux-{family}-{architecture}"
+        for family in ("gnu", "musl")
+        for architecture in ("x86_64", "aarch64")
+    }
+    assert all(re.search(r"@sha256:[a-f0-9]{64}$", image) for image in images.values())
     assert project["version"] == version
     assert f"PYNOX_VERSION:-{version}" in (ROOT / "scripts/install.sh").read_text()
     assert f"## {version}" in (ROOT / "CHANGELOG.md").read_text()

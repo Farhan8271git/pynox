@@ -110,6 +110,7 @@ fn run_python() -> Result<i32> {
 }
 
 pub fn doctor() -> i32 {
+    #[cfg(target_os = "linux")]
     let abi = unsafe {
         libc::syscall(
             libc::SYS_landlock_create_ruleset,
@@ -118,15 +119,35 @@ pub fn doctor() -> i32 {
             1u32,
         )
     };
+    #[cfg(target_os = "macos")]
+    let abi = -1i64;
     let python = python_info();
-    let available = abi >= 3 && python.stdlib.is_dir() && python.executable.is_file();
+    let runtime_available = python.stdlib.is_dir() && python.executable.is_file();
+    let sandbox_available = cfg!(target_os = "linux") && abi >= 3;
+    let available = runtime_available && (cfg!(target_os = "macos") || sandbox_available);
+    let family = if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_env = "musl") {
+        "linux-musl"
+    } else {
+        "linux-gnu"
+    };
+    let note = if cfg!(target_os = "macos") {
+        "Native Python mode only. Sandboxed execution and the pool are unavailable."
+    } else {
+        "Landlock probe only; run a restricted script to verify complete sandbox setup."
+    };
     println!(
         "{}",
         serde_json::json!({
             "runtime": "pynox", "version": env!("CARGO_PKG_VERSION"),
             "python": python, "architecture": std::env::consts::ARCH,
+            "os": std::env::consts::OS,
+            "platform": format!("{family}-{}", std::env::consts::ARCH),
             "landlock_abi": abi, "supported": available,
-            "note": "Landlock probe only; run a restricted script to verify complete sandbox setup"
+            "runtime_supported": runtime_available,
+            "sandbox_supported": sandbox_available,
+            "note": note
         })
     );
     if available {

@@ -1,9 +1,9 @@
 //! Poll all streams and completion together, without a polling sleep or a
 //! reader thread per stream. Large output cannot starve the deadline.
 use crate::{
-    finish,
     forkserver::{RunningJob, Template},
     policy::Policy,
+    runner::finish,
 };
 use anyhow::{bail, Result};
 use serde_json::Value;

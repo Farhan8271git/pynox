@@ -1,0 +1,6 @@
+{
+  "linux-gnu-x86_64": "quay.io/pypa/manylinux_2_28_x86_64@sha256:1e7b8460ad8fb3fb0fbe1cd818845159ac896b4fd17452d56e892c291f3b97a8",
+  "linux-gnu-aarch64": "quay.io/pypa/manylinux_2_28_aarch64@sha256:b873ffc316ffe8a154e3dc4872871de2ebd170db4876c8bbd983d42ff320001e",
+  "linux-musl-x86_64": "quay.io/pypa/musllinux_1_2_x86_64@sha256:915d73c75b4551f98fd7b12de655ef2e27419a6441ea07472b6e25e0d868d18d",
+  "linux-musl-aarch64": "quay.io/pypa/musllinux_1_2_aarch64@sha256:75a9ccd28ccc0abda65e462133f6e324943354e4e4936b51ba7c2ddc98352f86"
+}
