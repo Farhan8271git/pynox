@@ -40,11 +40,16 @@ def main():
         subprocess.run(command, env=env, check=True)
         binary = root / "bin/pynox"
         doctor = json.loads(subprocess.check_output([binary, "doctor"]))
-        assert Path(doctor["python"]["home"]).is_relative_to(root)
+        assert Path(doctor["python"]["home"]).is_relative_to(root), doctor["python"]["home"]
         assert doctor["python"]["abi"] == abi
         assert doctor["python"]["version"] == built["python"]["version"]
         assert doctor["platform"] == platform_tag
         assert marker.read_text() == "another installed variant"
+        prefix = subprocess.check_output(
+            [binary, "python", "-I", "-c", "import sys; print(sys.base_prefix)"],
+            text=True,
+        ).strip()
+        assert Path(prefix).resolve().is_relative_to(root), prefix
         command_prefix = [binary] if doctor["sandbox_supported"] else [binary, "python"]
         subprocess.run([*command_prefix, str(ROOT / "examples/hello.py")], check=True)
         repeat = subprocess.run(command, env=env, capture_output=True)

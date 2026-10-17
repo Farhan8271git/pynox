@@ -80,7 +80,8 @@ pub fn python_info() -> PythonInfo {
     let mut info: PythonInfo =
         serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/python.json"))).unwrap();
     // The running executable's location, not cwd/environment, selects a bundle.
-    if let Ok(executable) = std::env::current_exe() {
+    // macOS can return the launcher symlink, while Linux returns its target.
+    if let Ok(executable) = std::env::current_exe().and_then(|path| path.canonicalize()) {
         if let Some(root) = executable.parent().and_then(|bin| bin.parent()) {
             let home = root.join("python");
             let stdlib = home.join(format!("lib/python{}", info.major_minor));
