@@ -23,6 +23,9 @@ make build
 ./target/release/pynox examples/hello.py
 ```
 
+`pynox --version` (or `-V`) reports both versions:
+`pynox 0.1.0 (CPython 3.12.14)`.
+
 Restricted execution returns a JSON result containing stdout, stderr, exit
 status, a concise error and the effective policy. The CLI exits with the result's
 status. Only the script and runtime are implicitly readable; grant other paths:

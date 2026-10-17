@@ -30,9 +30,18 @@ class ProductTests(unittest.TestCase):
 
     def test_doctor_and_version(self):
         result = subprocess.run([runtime.BINARY, "doctor"], capture_output=True, check=True)
-        self.assertEqual(json.loads(result.stdout)["runtime"], "pynox")
-        result = subprocess.run([runtime.BINARY, "--version"], capture_output=True, check=True)
-        self.assertEqual(result.stdout.strip(), b"pynox 0.1.0")
+        doctor = json.loads(result.stdout)
+        self.assertEqual(doctor["runtime"], "pynox")
+        python = self.python("-c", "import platform; print(platform.python_version())")
+        self.assertEqual(python.returncode, 0, python.stderr)
+        expected = f"pynox {doctor['version']} (CPython {python.stdout.strip()})\n"
+        for flag in ("--version", "-V"):
+            with self.subTest(flag=flag):
+                result = subprocess.run(
+                    [runtime.BINARY, flag], capture_output=True, text=True, check=True
+                )
+                self.assertEqual(result.stdout, expected)
+                self.assertEqual(result.stderr, "")
 
     def test_json_differential(self):
         source = runtime.ROOT / "tests/fixtures/json_contract.py"

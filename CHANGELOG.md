@@ -9,5 +9,6 @@
 - Retain a JSONL pool with clean templates and disposable per-task children.
 - Integrate an opt-in, bounded `json.dump` fast path without changing scripts.
 - Provide explicit unrestricted CPython CLI mode and a capability probe.
+- Report Pynox and the loaded CPython runtime together in `--version` / `-V`.
 - Add relocatable CPython bundles, checksum installation, ADRs and GitHub CI.
 - Preserve the earlier research outside the active source tree.

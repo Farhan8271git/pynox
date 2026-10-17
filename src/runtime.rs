@@ -2,7 +2,26 @@
 use crate::{native_json, policy::python_info};
 use anyhow::{bail, Result};
 use pyo3_ffi as py;
-use std::{ffi::CString, mem::MaybeUninit, os::unix::ffi::OsStrExt};
+use std::{
+    ffi::{CStr, CString},
+    mem::MaybeUninit,
+    os::unix::ffi::OsStrExt,
+    sync::OnceLock,
+};
+
+pub fn cli_version() -> &'static str {
+    static VERSION: OnceLock<String> = OnceLock::new();
+    VERSION.get_or_init(|| {
+        // CPython exposes a static string, accessible before initialization.
+        // Read the loaded engine's version rather than a build-time assumption.
+        let python = unsafe { CStr::from_ptr(py::Py_GetVersion()) }.to_string_lossy();
+        format!(
+            "{} (CPython {})",
+            env!("CARGO_PKG_VERSION"),
+            python.split_whitespace().next().unwrap_or("unknown")
+        )
+    })
+}
 
 pub unsafe fn register_native() -> Result<()> {
     if py::PyImport_AppendInittab(c"_pynox_json".as_ptr(), Some(native_json::initialize)) < 0 {

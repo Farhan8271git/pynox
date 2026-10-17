@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(
-    version,
+    version = crate::runtime::cli_version(),
     name = "pynox",
     about = "Run Python with kernel-enforced permissions",
     after_help = "Commands:\n  pynox run [OPTIONS] SCRIPT  Restricted execution (also the default)\n  pynox pool [OPTIONS]        Restricted JSONL task pool\n  pynox python [ARGS]         CPython CLI, WITHOUT sandbox\n  pynox doctor                Check runtime and kernel capabilities\n\nExperimental optimization: --optimize-json (also supported immediately after `python`)."

@@ -28,8 +28,12 @@ The optional optimization flag must immediately follow `python`. Use `--` to
 end Pynox's prefix parsing. This mode inherits the normal environment.
 
 `pynox doctor` prints build Python, architecture and a Landlock availability
-probe. Actual execution still checks all sandbox setup steps. `--version`
-reports the Pynox version, independently of CPython.
+probe. Actual execution still checks all sandbox setup steps. `--version` and
+`-V` report both Pynox and the loaded CPython runtime, without initializing Python:
+
+```text
+pynox 0.1.0 (CPython 3.12.14)
+```
 
 ## Pool
 
