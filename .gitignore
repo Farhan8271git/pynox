@@ -1,0 +1,10 @@
+/target/
+/.venv/
+/dist/
+/site/
+/docs/adr/
+/.pytest_cache/
+/.ruff_cache/
+/examples/out/
+__pycache__/
+*.pyc

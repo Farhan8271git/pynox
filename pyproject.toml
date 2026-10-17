@@ -1,0 +1,24 @@
+[project]
+name = "pynox-dev"
+version = "0.1.0"
+description = "Development tools for the Pynox Rust runtime"
+requires-python = ">=3.12,<3.13"
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = ["pytest==8.4.2", "ruff==0.14.13", "patchelf==0.17.2.4", "pyyaml==6.0.3"]
+docs = ["zensical==0.0.16"]
+integration = ["pydantic==2.14.1", "aws-lambda-powertools==3.36.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

@@ -1,0 +1,11 @@
+site_name = "Pynox"
+site_description = "Python execution with explicit permissions and native optimizations"
+nav = [
+  { "Overview" = "index.md" },
+  { "Commands" = "usage.md" },
+  { "Sandbox" = "sandbox.md" },
+  { "Distribution" = "distribution.md" },
+  { "Performance" = "performance.md" },
+  { "Research" = "research.md" },
+  { "Architecture decisions" = "adr/README.md" },
+]

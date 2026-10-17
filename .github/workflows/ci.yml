@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv sync --locked
+      - name: Select matching CPython
+        run: echo "PYO3_PYTHON=$(uv python find --system --managed-python "$(cat .python-version)")" >> "$GITHUB_ENV"
+      - run: make check
+      - run: make docs
+      - name: Shell syntax
+        run: bash -n scripts/build.sh scripts/install.sh
+
+  runtime:
+    name: Runtime (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv sync --locked --group integration
+      - run: make build
+      - name: Check kernel support
+        run: ./target/release/pynox doctor
+      - name: Kernel, lifecycle, CPython and framework contracts
+        run: uv run --locked --group integration pytest --junitxml=dist/tests.xml
+      - name: Package and test relocation
+        run: uv run --locked python scripts/package.py
+      - name: Test installation from release assets
+        run: uv run --locked python scripts/check_install.py
+      - name: Upload reports and candidate bundle
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: candidate-${{ matrix.runner }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
