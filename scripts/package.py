@@ -50,8 +50,6 @@ def main():
             bundle / "examples",
             ignore=shutil.ignore_patterns("out", "__pycache__"),
         )
-        if (ROOT / "benchmarks").is_dir():
-            shutil.copytree(ROOT / "benchmarks", bundle / "benchmarks")
         # Erase build-host loader paths. The ELF loader resolves this before main().
         subprocess.run(
             ["patchelf", "--set-rpath", "$ORIGIN/../python/lib", bundle / "bin/pynox"],

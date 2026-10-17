@@ -12,6 +12,11 @@ make docs
 make bundle
 ```
 
+`make clean` removes build/release artifacts, generated documentation and local
+caches. `make distclean` also removes `.venv`. Restore the development environment
+and executable with `make setup && make build`. Neither command removes source,
+tests, canonical ADRs or recorded benchmark evidence.
+
 Rust implements process control, policy, native adapters and optimized paths.
 Small Python bootstraps integrate with CPython. Preserve ordinary Python APIs
 and document every behavior difference. Keep framework dependencies in optional

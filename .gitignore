@@ -3,6 +3,7 @@
 /dist/
 /site/
 /docs/adr/
+/.cache/
 /.pytest_cache/
 /.ruff_cache/
 /examples/out/

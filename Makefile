@@ -1,4 +1,4 @@
-.PHONY: setup build check test docs bundle
+.PHONY: setup build check test docs bundle clean distclean
 setup:
 	uv sync --locked
 build:
@@ -16,3 +16,8 @@ docs:
 	uv run --locked --group docs zensical build
 bundle: build
 	uv run --locked python scripts/package.py
+clean:
+	rm -rf -- target dist site docs/adr .cache .pytest_cache .ruff_cache
+	find src tests scripts examples -type d -name __pycache__ -prune -exec rm -rf -- {} +
+distclean: clean
+	rm -rf -- .venv
