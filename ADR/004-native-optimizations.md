@@ -1,4 +1,4 @@
-# ADR 004: Measured native optimizations with explicit contracts
+# ADR 004: Transparent, measured native optimizations
 
 ## Status
 
@@ -6,39 +6,45 @@ Accepted — 2026-10-17.
 
 ## Context
 
-Bun-inspired performance can come from the engine, fewer allocations/copies,
-native APIs, batching and eliminating repeated work. Rust alone does not make
-an existing C implementation faster. The JSON experiment found a concrete
-benefit by routing selected `json.dump` calls through an existing CPython
-encoder, with memory and streaming tradeoffs.
+Bun's speed came from the engine it chose, from native runtime APIs and from
+startup work, not from its implementation language. Python already starts in
+about 8 ms and most of its standard library is C, so wins are narrower and
+must be found operation by operation. The JSON experiment found one: routing
+eligible `json.dump` calls through CPython's existing encoder with one batched
+write, with memory and streaming tradeoffs. Putting it behind a flag meant
+nobody benefited by default.
 
 ## Decision
 
-Integrate the bounded JSON path behind `--optimize-json`, off by default.
-Maintain normal imports/calls and conservative fallback. Keep `open`, `json.load`
-and arbitrary framework internals unchanged. Register the native module through
-CPython and install the integration once before user code, not by intercepting
-every language operation.
+Optimizations are always on and never behind a flag. They install lazily: a
+meta path finder patches the target module right after the application
+imports it and then removes itself, so programs that never import the module
+pay nothing. `json.__loader__` and `json.__spec__` still describe CPython's
+loader. Each optimization has an eligibility contract, falls back to
+CPython's own algorithm for anything else and is measured against stock
+CPython on complete workloads, including memory and concurrency effects.
 
-Every optimization requires an eligibility contract, direct CPython comparison,
-side-effect/error checks and complete-workload measurements. Report allocations,
-memory and concurrency effects, not just an isolated best-case multiplier.
-Prefer a small set of broad, maintainable improvements.
+Startup is a budget. The bootstrap imports nothing beyond what CPython
+initializes, embedded Python is precompiled at build time and the supervisor
+waits on a pidfd. A change that adds a stdlib import to startup is a
+regression. Candidates are chosen from an agent-shaped workload suite:
+lifecycle first (templates, sessions), then I/O paths (output batching, event
+loop), then interpreter build options (static libpython, allocator).
 
 ## Alternatives considered
 
-- Replace all standard functions with Rust equivalents: many are already native
-  and edge cases would multiply maintenance.
-- Make the JSON path unconditional: changes streaming/memory behavior.
-- Require `pynox.read_json` in user code: useful as an optional API, but does not
-  satisfy transparent acceleration.
-- Promise every workload is faster: unsupported by the experiments.
+- A flag per optimization: no reach, and every optimization multiplies flags.
+- Eager installation at startup: about 7 ms for programs that never use JSON.
+- Replace standard functions with Rust equivalents broadly: most are already
+  native and edge cases multiply maintenance.
+- Promise every workload is faster: unsupported; pure Python loops stay
+  CPython loops.
 
 ## Consequences
 
-JSON output may be materialized rather than streamed. Limits are per call,
-not aggregate memory budgets. Introspection, concurrent mutation and all
-partial-write cases are not certified equivalent. The retained 158 probes
-provide evidence, not universal proof. Future candidates include upstream
-CPython builds/execution, imports, buffers and event loops; each must beat a
-strong existing-Python baseline before becoming a product claim.
+Eligible `json.dump` output is materialized, bounded by a per-call estimate of
+64 MiB, instead of streamed. Introspection, concurrent mutation and partial
+writes are not certified equivalent; 158 differential probes provide
+evidence, not proof. Each patch is a compatibility contract per Python minor,
+so the set stays small. Measured on 2026-10-17: the default mode within about
+0.4 ms of CPython on small programs and 1.96× on a 3.9 MiB JSON pipeline.

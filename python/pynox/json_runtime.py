@@ -1,7 +1,9 @@
-"""Experimental json.dump fast path; application imports/calls remain unchanged.
+"""Bounded json.dump fast path; application imports and calls remain unchanged.
 
-This is an explicit runtime bootstrap patch, not a modification to the installed
-CPython, a new JSON encoder, or a claim of complete Python compatibility.
+Pynox applies this patch right after the application imports ``json``. It is a
+runtime bootstrap patch, not a modification to the installed CPython, a new
+JSON encoder, or a claim of complete Python compatibility. Ineligible calls run
+CPython's original streaming algorithm.
 """
 
 import functools
@@ -123,5 +125,5 @@ def dump(
         fp.write(part)
 
 
-def install():
-    json.dump = dump
+def install(module=json):
+    module.dump = dump

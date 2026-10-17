@@ -10,7 +10,7 @@ package = false
 [dependency-groups]
 dev = ["pytest==8.4.2", "ruff==0.14.13", "patchelf==0.17.2.4; sys_platform == 'linux'", "pyyaml==6.0.3"]
 docs = ["zensical==0.0.16"]
-integration = ["pydantic==2.14.1", "aws-lambda-powertools==3.36.0"]
+integration = ["pydantic==2.14.1", "aws-lambda-powertools==3.36.0", "pydantic-monty==1.1.0"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

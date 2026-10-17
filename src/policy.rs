@@ -1,4 +1,3 @@
-#[cfg(any(target_os = "linux", test))]
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
@@ -11,17 +10,14 @@ mod tests;
 #[derive(Parser, Debug)]
 #[command(
     version = crate::runtime::cli_version(),
-    name = "pynox",
-    about = "Run Python with explicit execution controls",
-    after_help = "Commands:\n  pynox run [OPTIONS] SCRIPT  Restricted execution (also the default)\n  pynox pool [OPTIONS]        Restricted JSONL task pool\n  pynox python [ARGS]         CPython CLI, WITHOUT sandbox\n  pynox doctor                Check runtime and kernel capabilities\n\nExperimental optimization: --optimize-json (also supported immediately after `python`)."
+    name = "pynox sandbox",
+    about = "Run one Python script with explicit permissions and limits; prints a JSON result",
+    after_help = "Other commands:\n  pynox [PYTHON_OPTIONS] SCRIPT [ARGS]  Ordinary Python mode, no sandbox\n  pynox pool [OPTIONS]                   Sandboxed JSONL task pool\n  pynox doctor                           Check runtime and kernel capabilities"
 )]
 pub struct Cli {
     /// Allow IPv4/IPv6 networking. Host Unix sockets remain denied.
     #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1, require_equals = true, default_missing_value = "true", default_value = "false")]
     pub allow_network: bool,
-    /// Enable experimental bounded json.dump optimization (uses extra memory).
-    #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1, require_equals = true, default_missing_value = "true", default_value = "false")]
-    pub optimize_json: bool,
     /// File or directory to make readable (repeat this flag for multiple paths).
     #[arg(long, value_name = "PATH")]
     pub allow_read: Vec<PathBuf>,
@@ -49,11 +45,12 @@ pub struct Cli {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[cfg(any(target_os = "linux", test))]
 pub struct Policy {
     pub allow_network: bool,
-    pub optimize_json: bool,
+    /// Script path, or the display name of inline `source` for tracebacks.
     pub script: PathBuf,
+    /// Inline program text for pool requests that carry `code` instead of a file.
+    pub source: Option<String>,
     pub args: Vec<String>,
     pub allow_read: Vec<PathBuf>,
     pub allow_write: Vec<PathBuf>,
@@ -80,7 +77,7 @@ pub fn python_info() -> PythonInfo {
     let mut info: PythonInfo =
         serde_json::from_str(include_str!(concat!(env!("OUT_DIR"), "/python.json"))).unwrap();
     // The running executable's location, not cwd/environment, selects a bundle.
-    // macOS can return the launcher symlink, while Linux returns its target.
+    // Resolve symlinks so an installed CLI link finds its versioned bundle.
     if let Ok(executable) = std::env::current_exe().and_then(|path| path.canonicalize()) {
         if let Some(root) = executable.parent().and_then(|bin| bin.parent()) {
             let home = root.join("python");
@@ -98,19 +95,29 @@ pub fn python_info() -> PythonInfo {
     info
 }
 
-#[cfg(any(target_os = "linux", test))]
 impl Policy {
-    pub fn from_cli(cli: &Cli) -> Result<Self> {
+    /// Build a task policy. With `source`, the command's first element is only a
+    /// display name for the inline program and grants no file access.
+    pub fn from_cli(cli: &Cli, source: Option<String>) -> Result<Self> {
         if !(1..=16_777_216).contains(&cli.max_output) {
             bail!("max_output must be between 1 and 16777216 bytes");
         }
         let (script, args) = cli.command.split_first().context("Script is required")?;
-        let script = PathBuf::from(script)
-            .canonicalize()
-            .context("Cannot resolve script")?;
-        if !script.is_file() {
-            bail!("Script must be a regular file");
-        }
+        let script = if source.is_some() {
+            let name = script.to_str().context("Code name must be UTF-8")?;
+            if name.is_empty() || name.contains(['\0', '/']) {
+                bail!("Code name must be a non-empty label without path separators");
+            }
+            PathBuf::from(name)
+        } else {
+            let script = PathBuf::from(script)
+                .canonicalize()
+                .context("Cannot resolve script")?;
+            if !script.is_file() {
+                bail!("Script must be a regular file");
+            }
+            script
+        };
         for name in &cli.allow_env {
             if name.is_empty() || name.contains(['=', '\0']) {
                 bail!("Invalid environment variable name");
@@ -150,8 +157,8 @@ impl Policy {
         }
         Ok(Self {
             allow_network: cli.allow_network,
-            optimize_json: cli.optimize_json,
             script,
+            source,
             args: args
                 .iter()
                 .map(|arg| {

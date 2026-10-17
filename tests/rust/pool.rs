@@ -10,7 +10,6 @@ fn request(mut fields: Value) -> Request {
 fn minimal_request_has_no_optional_capabilities() {
     let job = request(json!({})).job().unwrap();
     assert!(!job.policy.allow_network);
-    assert!(!job.policy.optimize_json);
     assert!(job.policy.allow_read.is_empty());
     assert!(job.policy.allow_write.is_empty());
     assert!(job.policy.package_dirs.is_empty());
@@ -29,7 +28,7 @@ fn unknown_fields_and_mistyped_options_are_rejected() {
         json!({"script": "app.py", "timeout": 5}),
         json!({"script": "app.py", "max_output": -1}),
         json!({"script": "app.py", "env": {"KEY": 42}}),
-        json!({"id": "missing-script"}),
+        json!({"code": 42}),
     ] {
         assert!(
             serde_json::from_value::<Request>(value.clone()).is_err(),
@@ -119,4 +118,26 @@ fn fragmented_utf8_and_final_line_without_newline_are_preserved() {
         (source.as_bytes().to_vec(), false)
     );
     assert!(read_line(&mut input).unwrap().is_none());
+}
+
+#[test]
+fn requests_carry_exactly_one_program() {
+    assert!(serde_json::from_value::<Request>(json!({"id": "missing"}))
+        .unwrap()
+        .job()
+        .is_err());
+    assert!(request(json!({"code": "print(1)"})).job().is_err());
+    assert!(request(json!({"name": "step.py"})).job().is_err());
+    let inline = serde_json::from_value::<Request>(json!({"code": "print(1)", "args": ["x"]}))
+        .unwrap()
+        .job()
+        .unwrap();
+    assert_eq!(inline.policy.script.to_str(), Some("<code>"));
+    assert_eq!(inline.policy.source.as_deref(), Some("print(1)"));
+    assert_eq!(inline.policy.args, ["x"]);
+    let named = serde_json::from_value::<Request>(json!({"code": "print(1)", "name": "step.py"}))
+        .unwrap()
+        .job()
+        .unwrap();
+    assert_eq!(named.policy.script.to_str(), Some("step.py"));
 }

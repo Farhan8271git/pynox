@@ -50,15 +50,20 @@ def main():
             text=True,
         ).strip()
         assert Path(prefix).resolve().is_relative_to(root), prefix
-        command_prefix = [binary] if doctor["sandbox_supported"] else [binary, "python"]
-        subprocess.run([*command_prefix, str(ROOT / "examples/hello.py")], check=True)
+        subprocess.run([binary, str(ROOT / "examples/hello.py")], check=True)
+        if doctor["sandbox_supported"]:
+            report = json.loads(
+                subprocess.check_output([binary, "sandbox", str(ROOT / "examples/hello.py")])
+            )
+            assert report["exit"] == 0 and "Hello from Pynox" in report["stdout"], report
         repeat = subprocess.run(command, env=env, capture_output=True)
         assert repeat.returncode != 0 and b"already installed" in repeat.stderr
         mismatch = subprocess.run(
             command, env={**env, "PYNOX_PYTHON_VERSION": other_minor}, capture_output=True
         )
         assert mismatch.returncode == 2 and b"does not match" in mismatch.stderr
-        other_platform = "macos-x86_64" if built["os"] == "linux" else "linux-gnu-x86_64"
+        other_platform = platform_tag.replace("-musl-", "-X-").replace("-gnu-", "-musl-")
+        other_platform = other_platform.replace("-X-", "-gnu-")
         wrong_archive = root / f"pynox-{version}-{abi}-{other_platform}.tar.gz"
         incompatible = subprocess.run(
             ["bash", str(ROOT / "scripts/install.sh"), "--archive", str(wrong_archive)],

@@ -1,21 +1,22 @@
 # Pynox
 
-Pynox combines CPython compatibility, a Rust runtime and explicit Linux
-permissions. Ordinary Python scripts run without a project-specific import.
+Pynox is a Python runtime for agents and the people who build them. It runs
+ordinary Python on CPython with a per-task kernel sandbox, a warm worker pool,
+structured results and transparent native optimizations. `pynox script.py`
+behaves like `python script.py`.
 
 Version 0.1 is **pre-alpha**, with build targets for CPython 3.11–3.15 (GIL),
-defaulting to 3.11. Linux glibc and musl builds include a restricted script
-runner and JSONL task pool. Linux and macOS both provide an explicit unrestricted
-CPython CLI and an optional JSON optimization, on ARM64 and x86_64. APIs and
+defaulting to 3.11, on Linux glibc and musl, x86_64 and ARM64. APIs and
 policies can change; this is an evaluation release.
 
-- [Commands and tasks](usage.md)
+- [Commands](usage.md)
 - [Sandbox contract](sandbox.md)
 - [Installation and versions](distribution.md)
 - [Performance and compatibility](performance.md)
 - [Research provenance](research.md)
 - [Architecture decisions](adr/README.md)
 
-Build with `make setup && make build`. On Linux, run
-`./target/release/pynox examples/hello.py` for a restricted asyncio example.
-On macOS, use `./target/release/pynox python examples/hello.py` for native execution.
+Build with `make setup && make build`, then run
+`./target/release/pynox examples/hello.py`. Try the same script in the sandbox
+with `./target/release/pynox sandbox examples/hello.py`, and the agent examples
+with `PYNOX_BIN=$PWD/target/release/pynox uv run python examples/agent_tool.py`.

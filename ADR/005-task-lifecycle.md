@@ -6,21 +6,25 @@ Accepted — 2026-10-17.
 
 ## Context
 
-Repeated short Python tasks often pay startup/import costs. Reusing a process
-can leak modules, globals, environment, descriptors and native state. Comparing
-a warm service to a newly started Python is not a language-speed comparison.
+Agents issue many short tasks. Each pays CPython startup and, worse, the
+imports of the libraries it uses: hundreds of milliseconds for pandas. Reusing
+a process leaks modules, globals, environment, descriptors and native state.
+Comparing a warm service to a newly started Python is not a language-speed
+comparison, but for agents the warm path is the one that matters.
 
 ## Decision
 
 Expose pooling explicitly through `pynox pool` and JSONL. Each worker holds a
 single-threaded trusted CPython template in a separate process; each job uses
-a new disposable child. The threaded supervisor is never the fork source.
-Deliver job data only after fork. Bound queues, request size, output and runtime.
-Do not retry interrupted jobs automatically.
+a new disposable child forked from it. The threaded supervisor is never the
+fork source. Deliver job data only after fork. Bound queues, request size,
+output and runtime. Do not retry interrupted jobs automatically.
 
-Trusted preloads are operator-only configuration. Reject templates leaving
-extra native threads or descriptors; reject overlapping task write grants.
-Per-task optimization and network settings apply only to the child.
+Trusted preloads are operator-only configuration and run before any job.
+Reject templates leaving extra threads or descriptors; reject task write
+grants overlapping preloaded runtime paths. Per-task permissions, environment
+and limits apply only to the child. Measured on 2026-10-17, a small task
+through the pool answers in about 4.7 ms against 7.7 ms for a new `python`.
 
 ## Alternatives considered
 
@@ -31,6 +35,7 @@ Per-task optimization and network settings apply only to the child.
 ## Consequences
 
 Authorized disk changes persist. Preload-time environment and state are fixed
-at template creation. Native extension fork safety still matters. Some workloads
-perform better with existing Python pools; compare like-for-like. Persistent
-agent sessions and memory sharing require explicit future contracts.
+at template creation. Native extension fork safety still matters. Persistent
+sessions, where an agent keeps variables between calls in one isolated
+process, are the next lifecycle contract (ADR 011) and must be explicit,
+never the default.

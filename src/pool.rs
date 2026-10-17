@@ -48,10 +48,16 @@ struct Request {
     #[serde(default)]
     allow_network: bool,
     #[serde(default)]
-    optimize_json: bool,
-    #[serde(default)]
     id: Value,
-    script: PathBuf,
+    /// Path of a script file to run. Exactly one of `script` and `code` is required.
+    #[serde(default)]
+    script: Option<PathBuf>,
+    /// Inline program text; it needs no file and grants no file access.
+    #[serde(default)]
+    code: Option<String>,
+    /// Display name for inline code in tracebacks and errors (default `<code>`).
+    #[serde(default)]
+    name: Option<String>,
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
@@ -82,10 +88,23 @@ fn default_output() -> u64 {
 
 impl Request {
     fn job(self) -> Result<Job> {
+        let (program, source) = match (self.script, self.code) {
+            (Some(script), None) => {
+                if self.name.is_some() {
+                    bail!("name applies to code requests only");
+                }
+                (script.into_os_string(), None)
+            }
+            (None, Some(code)) => (
+                self.name.unwrap_or_else(|| "<code>".into()).into(),
+                Some(code),
+            ),
+            (Some(_), Some(_)) => bail!("Use either script or code, not both"),
+            (None, None) => bail!("Request needs script or code"),
+        };
         let cli = Cli {
             allow_network: self.allow_network,
-            optimize_json: self.optimize_json,
-            command: std::iter::once(self.script.into_os_string())
+            command: std::iter::once(program)
                 .chain(self.args.into_iter().map(Into::into))
                 .collect(),
             allow_read: self.allow_read,
@@ -96,7 +115,7 @@ impl Request {
             memory: parse_memory(&self.memory).map_err(|e| anyhow!(e))?,
             max_output: self.max_output,
         };
-        let policy = Policy::from_cli(&cli)?;
+        let policy = Policy::from_cli(&cli, source)?;
         if self.env.values().any(|value| value.contains('\0')) {
             bail!("Environment values cannot contain NUL");
         }

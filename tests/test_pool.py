@@ -71,7 +71,7 @@ class PoolRuntimeTests(runtime.RuntimeTests):
                 if name == "package_dir":
                     name = "package_dirs"
                 request.setdefault(name, []).append(value)
-            elif name in ("allow_network", "optimize_json"):
+            elif name == "allow_network":
                 request[name] = value == "true"
             else:
                 request[name] = int(value) if name == "max_output" else value

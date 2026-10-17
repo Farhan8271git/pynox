@@ -10,7 +10,7 @@ make test PYNOX_PYTHON_VERSION=3.15
 ```
 
 The default is Python 3.11. GitHub CI covers five pinned CPython versions on
-glibc Linux, musl Linux and macOS, each on x86_64 and aarch64.
+glibc and musl Linux, each on x86_64 and aarch64.
 
 ## Rust unit tests
 
@@ -28,17 +28,14 @@ logic without making it public or entering release builds.
 These tests do not initialize CPython or apply a sandbox to the test runner.
 They exercise Rust logic and real pipes; kernel enforcement is checked in
 separate processes by the integration suite.
-macOS runs the portable policy unit tests; Linux also runs pool, capture and
-supervision tests.
 
 ## Python integration tests
 
 The Python tests launch the compiled Rust executable and inspect its behavior.
 They cover kernel permissions, native calls, CPython compatibility, framework
 execution and pool lifecycle, including isolation between jobs.
-On macOS, Linux kernel tests are explicitly skipped and
-[test_portability.py](test_portability.py) verifies that restricted commands
-refuse execution. Native CLI, JSON compatibility and relocation still run.
+[test_agents.py](test_agents.py) runs the agent examples: the pool tool and,
+when `pydantic-monty` is installed, the Monty bridge.
 
 With a matching binary already built, run them directly:
 

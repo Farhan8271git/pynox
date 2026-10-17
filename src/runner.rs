@@ -6,10 +6,10 @@ use std::{
     fs::File,
     io::{Read, Write},
     os::{
-        fd::{AsRawFd, FromRawFd},
+        fd::{AsRawFd, FromRawFd, RawFd},
         unix::process::{CommandExt, ExitStatusExt},
     },
-    process::{Command, ExitStatus, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -37,8 +37,43 @@ fn drain(mut reader: impl Read, maximum: usize) -> (Vec<u8>, bool) {
     (captured, truncated)
 }
 
+/// Block until the worker exits or the deadline passes. A pidfd wakes the
+/// supervisor immediately, instead of a polling sleep adding latency to
+/// every task.
+fn wait_until(child: &mut Child, deadline: Instant) -> Result<(ExitStatus, bool)> {
+    let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, child.id() as libc::pid_t, 0) };
+    if pidfd < 0 {
+        return Err(std::io::Error::last_os_error()).context("Cannot watch sandbox worker");
+    }
+    let pidfd = unsafe { File::from_raw_fd(pidfd as RawFd) };
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            let _ = child.kill();
+            return Ok((child.wait()?, true));
+        }
+        let mut poll = libc::pollfd {
+            fd: pidfd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let timeout = remaining.as_millis().min(i32::MAX as u128 - 1) as i32 + 1;
+        let ready = unsafe { libc::poll(&mut poll, 1, timeout) };
+        if ready < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error.into());
+        }
+        if ready > 0 {
+            return Ok((child.wait()?, false));
+        }
+    }
+}
+
 pub fn supervise(cli: &Cli, start: Instant) -> Result<Value> {
-    let policy = Policy::from_cli(cli)?;
+    let policy = Policy::from_cli(cli, None)?;
     let mut fds = [-1; 2];
     if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
         return Err(std::io::Error::last_os_error().into());
@@ -84,18 +119,8 @@ pub fn supervise(cli: &Cli, start: Instant) -> Result<Value> {
     let mut stdin = child.stdin.take().unwrap();
     stdin.write_all(serde_json::to_string(&policy)?.as_bytes())?;
     drop(stdin);
-    let mut timed_out = false;
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if start.elapsed() >= Duration::from_millis(policy.timeout_ms) {
-            timed_out = true;
-            let _ = child.kill();
-            break child.wait()?;
-        }
-        thread::sleep(Duration::from_millis(5));
-    };
+    let (status, timed_out) =
+        wait_until(&mut child, start + Duration::from_millis(policy.timeout_ms))?;
     let (stdout, stdout_truncated) = stdout_task.join().unwrap();
     let (stderr, stderr_truncated) = stderr_task.join().unwrap();
     let (report, report_truncated) = report_task.join().unwrap();
@@ -170,7 +195,6 @@ pub fn finish(
         "package_dirs": policy.package_dirs,
         "network": if policy.allow_network { "ipv4+ipv6" } else { "deny" },
         "subprocesses": "deny", "host_unix_sockets": "deny",
-        "optimize_json": policy.optimize_json,
         "timeout_ms": policy.timeout_ms, "memory_bytes": policy.memory_bytes,
         "backend": "landlock+seccomp"
     });

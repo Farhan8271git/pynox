@@ -1,3 +1,6 @@
+//! Sandboxed task execution inside a cold worker or a pool template's child.
+//! Task data crosses into Python as objects built with the C API, so the
+//! bootstrap imports nothing beyond what CPython already initialized.
 use crate::{
     policy::{python_info, Policy, PythonInfo},
     preload::TemplateConfig,
@@ -5,13 +8,16 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use pyo3_ffi as py;
+use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     ffi::{CStr, CString},
     fs::File,
-    io::{Read, Write},
+    io::Read,
     mem::MaybeUninit,
-    os::fd::{AsRawFd, FromRawFd},
+    os::fd::AsRawFd,
+    path::Path,
+    ptr,
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -20,18 +26,35 @@ pub struct Job {
     pub env: BTreeMap<String, String>,
 }
 
+const REPORT_FD: libc::c_int = 3;
+
 pub fn run(warm: bool) -> i32 {
     match execute(warm) {
         Ok(code) => code,
         Err(error) => {
-            let report = serde_json::json!({
+            let report = json!({
                 "exit": 125,
                 "error": {"type": "SandboxSetupError", "message": format!("{error:#}")}
             });
-            let mut pipe = unsafe { File::from_raw_fd(3) };
-            let _ = pipe.write_all(report.to_string().as_bytes());
+            write_report(&report);
             125
         }
+    }
+}
+
+/// Write the diagnostic report without closing the descriptor: a later setup
+/// failure must still be able to report on the same channel.
+fn write_report(report: &Value) {
+    let mut payload = report.to_string().into_bytes();
+    while !payload.is_empty() {
+        let written = unsafe { libc::write(REPORT_FD, payload.as_ptr().cast(), payload.len()) };
+        if written < 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return;
+        }
+        payload.drain(..written as usize);
     }
 }
 
@@ -63,20 +86,37 @@ fn execute(warm: bool) -> Result<i32> {
     if !warm {
         initialize(&python)?;
     }
-    if policy.optimize_json {
-        crate::runtime::install_json()?;
-    }
-    let encoded = serde_json::to_string(&serde_json::to_string(&policy)?)?;
-    let packages = serde_json::to_string(&serde_json::to_string(&python.site_packages)?)?;
-    if let Some(env) = env {
-        let encoded_env = serde_json::to_string(&serde_json::to_string(&env)?)?;
-        python_code(&format!(
-            "os.environ.clear()\nos.environ.update(json.loads({encoded_env}))"
-        ))?;
-    }
-    python_code(&format!(
-        "_pynox_exit = _pynox_run(json.loads({encoded}), json.loads({packages}))"
-    ))?;
+    let report = unsafe {
+        if let Some(env) = env {
+            let result = call_bootstrap(c"_pynox_env", vec![string_dict(&env)?])?;
+            py::Py_DECREF(result);
+        }
+        let arguments = vec![
+            unicode(utf8(&policy.script)?)?,
+            string_list(policy.args.iter().map(String::as_str))?,
+            path_list(&policy.package_dirs)?,
+            path_list(&python.site_packages)?,
+            match &policy.source {
+                Some(code) => unicode(code)?,
+                None => py::Py_NewRef(py::Py_None()),
+            },
+        ];
+        let result = call_bootstrap(c"_pynox_run", arguments)?;
+        let report = to_json(result);
+        py::Py_DECREF(result);
+        report
+    };
+    let exit = report
+        .get(0)
+        .and_then(Value::as_u64)
+        .filter(|code| *code <= 255);
+    let report = match exit {
+        Some(exit) if report.get(1).is_some_and(|e| e.is_null() || e.is_object()) => {
+            json!({"exit": exit, "error": report[1]})
+        }
+        _ => bail!("Bootstrap returned an invalid report"),
+    };
+    write_report(&report);
     let code = unsafe { py::Py_FinalizeEx() };
     if code < 0 {
         bail!("Python finalization failed");
@@ -87,6 +127,15 @@ fn execute(warm: bool) -> Result<i32> {
 pub fn initialize(python: &PythonInfo) -> Result<()> {
     unsafe {
         crate::runtime::register_native()?;
+        // The isolated configuration does not read the locale, which would
+        // leave open(), stdout and the filesystem encoding in ASCII. UTF-8
+        // mode matches what stock CPython selects under the launcher's
+        // C.UTF-8 environment.
+        let mut preconfig = MaybeUninit::<py::PyPreConfig>::uninit();
+        py::PyPreConfig_InitIsolatedConfig(preconfig.as_mut_ptr());
+        let mut preconfig = preconfig.assume_init();
+        preconfig.utf8_mode = 1;
+        check(py::Py_PreInitialize(&preconfig))?;
         let mut config = MaybeUninit::<py::PyConfig>::uninit();
         py::PyConfig_InitIsolatedConfig(config.as_mut_ptr());
         let mut config = config.assume_init();
@@ -94,13 +143,8 @@ pub fn initialize(python: &PythonInfo) -> Result<()> {
         config.write_bytecode = 0;
         config.install_signal_handlers = 0;
         config.buffered_stdio = 0;
-        let home = CString::new(python.home.to_str().context("Non-UTF-8 Python home")?)?;
-        let executable = CString::new(
-            python
-                .executable
-                .to_str()
-                .context("Non-UTF-8 Python executable")?,
-        )?;
+        let home = CString::new(utf8(&python.home)?)?;
+        let executable = CString::new(utf8(&python.executable)?)?;
         let initialize = (|| -> Result<()> {
             check(py::PyConfig_SetBytesString(
                 &mut config,
@@ -117,7 +161,20 @@ pub fn initialize(python: &PythonInfo) -> Result<()> {
         py::PyConfig_Clear(&mut config);
         initialize?;
     }
-    python_code(include_str!("bootstrap.py"))
+    unsafe {
+        let main = py::PyImport_ImportModule(c"__main__".as_ptr());
+        if main.is_null() {
+            bail!("Cannot access the bootstrap namespace");
+        }
+        let outcome = crate::runtime::run_code(
+            crate::runtime::BOOTSTRAP,
+            py::PyModule_GetDict(main),
+            "Worker bootstrap",
+        );
+        py::Py_DECREF(main);
+        outcome?;
+    }
+    crate::runtime::install_optimizations()
 }
 
 pub fn preload(config: &TemplateConfig) -> Result<()> {
@@ -127,7 +184,8 @@ pub fn preload(config: &TemplateConfig) -> Result<()> {
     let directories = serde_json::to_string(&serde_json::to_string(&config.package_dirs)?)?;
     let modules = serde_json::to_string(&serde_json::to_string(&config.modules)?)?;
     python_code(&format!(
-        "sys.path.extend(json.loads({directories}))\n\
+        "import sys, json\n\
+         sys.path.extend(json.loads({directories}))\n\
          import importlib, gc\n\
          for _preload_name in json.loads({modules}): importlib.import_module(_preload_name)\n\
          gc.collect()\n\
@@ -144,6 +202,167 @@ fn python_code(source: &str) -> Result<()> {
         bail!("Python bootstrap failed");
     }
     Ok(())
+}
+
+fn utf8(path: &Path) -> Result<&str> {
+    path.to_str()
+        .with_context(|| format!("Non-UTF-8 path: {}", path.display()))
+}
+
+unsafe fn unicode(text: &str) -> Result<*mut py::PyObject> {
+    let object = py::PyUnicode_FromStringAndSize(text.as_ptr().cast(), text.len() as isize);
+    if object.is_null() {
+        bail!("Cannot create Python string");
+    }
+    Ok(object)
+}
+
+unsafe fn string_list<'a>(
+    items: impl ExactSizeIterator<Item = &'a str>,
+) -> Result<*mut py::PyObject> {
+    let list = py::PyList_New(items.len() as isize);
+    if list.is_null() {
+        bail!("Cannot create Python list");
+    }
+    for (index, item) in items.enumerate() {
+        match unicode(item) {
+            Ok(object) => py::PyList_SET_ITEM(list, index as isize, object),
+            Err(error) => {
+                py::Py_DECREF(list);
+                return Err(error);
+            }
+        }
+    }
+    Ok(list)
+}
+
+unsafe fn path_list(paths: &[std::path::PathBuf]) -> Result<*mut py::PyObject> {
+    let items = paths.iter().map(|p| utf8(p)).collect::<Result<Vec<_>>>()?;
+    string_list(items.into_iter())
+}
+
+unsafe fn string_dict(map: &BTreeMap<String, String>) -> Result<*mut py::PyObject> {
+    let dict = py::PyDict_New();
+    if dict.is_null() {
+        bail!("Cannot create Python dict");
+    }
+    for (name, value) in map {
+        let key = unicode(name)?;
+        let item = unicode(value)?;
+        let status = py::PyDict_SetItem(dict, key, item);
+        py::Py_DECREF(key);
+        py::Py_DECREF(item);
+        if status < 0 {
+            py::Py_DECREF(dict);
+            bail!("Cannot populate Python dict");
+        }
+    }
+    Ok(dict)
+}
+
+/// Call a trusted function defined by the bootstrap in `__main__`. Arguments
+/// are owned references and are consumed; the result is a new reference.
+unsafe fn call_bootstrap(
+    name: &CStr,
+    arguments: Vec<*mut py::PyObject>,
+) -> Result<*mut py::PyObject> {
+    let main = py::PyImport_ImportModule(c"__main__".as_ptr());
+    if main.is_null() {
+        bail!("Cannot access bootstrap module");
+    }
+    let function = py::PyObject_GetAttrString(main, name.as_ptr());
+    py::Py_DECREF(main);
+    if function.is_null() {
+        py::PyErr_Clear();
+        bail!("Bootstrap function {} is missing", name.to_string_lossy());
+    }
+    let tuple = py::PyTuple_New(arguments.len() as isize);
+    for (index, argument) in arguments.into_iter().enumerate() {
+        py::PyTuple_SET_ITEM(tuple, index as isize, argument);
+    }
+    let result = py::PyObject_Call(function, tuple, ptr::null_mut());
+    py::Py_DECREF(tuple);
+    py::Py_DECREF(function);
+    if result.is_null() {
+        py::PyErr_Print();
+        bail!("Python bootstrap failed");
+    }
+    Ok(result)
+}
+
+/// Convert the bootstrap's plain-data report to JSON. The GIL is held and the
+/// object is owned by the caller; unexpected types fall back to their repr.
+unsafe fn to_json(object: *mut py::PyObject) -> Value {
+    if object == py::Py_None() {
+        return Value::Null;
+    }
+    if py::PyBool_Check(object) != 0 {
+        return Value::Bool(object == py::Py_True());
+    }
+    if py::PyLong_Check(object) != 0 {
+        let mut overflow = 0;
+        let number = py::PyLong_AsLongLongAndOverflow(object, &mut overflow);
+        if overflow == 0 && py::PyErr_Occurred().is_null() {
+            return json!(number);
+        }
+        py::PyErr_Clear();
+        return repr(object);
+    }
+    if py::PyUnicode_Check(object) != 0 {
+        return text(object).map_or(Value::Null, Value::String);
+    }
+    if py::PyDict_Check(object) != 0 {
+        let mut map = serde_json::Map::new();
+        let mut position = 0;
+        let mut key = ptr::null_mut();
+        let mut value = ptr::null_mut();
+        while py::PyDict_Next(object, &mut position, &mut key, &mut value) != 0 {
+            let name = match to_json(key) {
+                Value::String(name) => name,
+                other => other.to_string(),
+            };
+            map.insert(name, to_json(value));
+        }
+        return Value::Object(map);
+    }
+    if py::PyList_Check(object) != 0 || py::PyTuple_Check(object) != 0 {
+        let length = py::PySequence_Size(object);
+        let mut items = Vec::new();
+        for index in 0..length.max(0) {
+            let item = py::PySequence_GetItem(object, index);
+            if item.is_null() {
+                py::PyErr_Clear();
+                items.push(Value::Null);
+                continue;
+            }
+            items.push(to_json(item));
+            py::Py_DECREF(item);
+        }
+        return Value::Array(items);
+    }
+    repr(object)
+}
+
+unsafe fn text(object: *mut py::PyObject) -> Option<String> {
+    let mut size = 0;
+    let pointer = py::PyUnicode_AsUTF8AndSize(object, &mut size);
+    if pointer.is_null() {
+        py::PyErr_Clear();
+        return None;
+    }
+    let bytes = std::slice::from_raw_parts(pointer.cast::<u8>(), size as usize);
+    Some(String::from_utf8_lossy(bytes).into_owned())
+}
+
+unsafe fn repr(object: *mut py::PyObject) -> Value {
+    let representation = py::PyObject_Repr(object);
+    if representation.is_null() {
+        py::PyErr_Clear();
+        return Value::Null;
+    }
+    let value = text(representation).map_or(Value::Null, Value::String);
+    py::Py_DECREF(representation);
+    value
 }
 
 unsafe fn check(status: py::PyStatus) -> Result<()> {

@@ -5,5 +5,5 @@ labels: bug
 ---
 
 Include `pynox doctor`, OS/kernel, command, minimal script, expected/actual result
-and whether `--optimize-json` was enabled. Remove credentials and sensitive paths.
+and which mode you used (`pynox`, `pynox sandbox` or `pynox pool`). Remove credentials and sensitive paths.
 For security issues, follow SECURITY.md.

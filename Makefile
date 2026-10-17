@@ -11,8 +11,8 @@ build:
 check:
 	cargo fmt --all -- --check
 	bash scripts/build.sh --check
-	uv run --locked ruff check src tests scripts examples
-	uv run --locked ruff format --check src tests scripts examples
+	uv run --locked ruff check python tests scripts examples
+	uv run --locked ruff format --check python tests scripts examples
 	uv run --locked python scripts/check_metadata.py
 test-rust:
 	bash scripts/build.sh --test
@@ -25,6 +25,6 @@ bundle: build
 	uv run --locked python scripts/package.py
 clean:
 	rm -rf -- target dist site docs/adr .cache .pytest_cache .ruff_cache
-	find src tests scripts examples -type d -name __pycache__ -prune -exec rm -rf -- {} +
+	find python tests scripts examples -type d -name __pycache__ -prune -exec rm -rf -- {} +
 distclean: clean
 	rm -rf -- .venv

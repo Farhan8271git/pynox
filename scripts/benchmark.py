@@ -15,7 +15,42 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT / "target/release/pynox"
-MODES = ("cpython", "pynox_python", "pynox_python_json", "sandbox", "sandbox_json")
+MODES = ("cpython", "pynox", "sandbox", "pool")
+
+
+class Pool:
+    """One persistent `pynox pool` process; each request is a sandboxed job."""
+
+    def __init__(self):
+        self.process = subprocess.Popen(
+            [str(BINARY), "pool", "--workers=1"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        ready = json.loads(self.process.stdout.readline())
+        assert ready["event"] == "ready", ready
+        self.sequence = 0
+
+    def run(self, script, root):
+        self.sequence += 1
+        request = {
+            "id": self.sequence,
+            "script": str(script),
+            "allow_read": [str(root)],
+            "allow_write": [str(root)],
+        }
+        start = time.perf_counter_ns()
+        self.process.stdin.write(json.dumps(request) + "\n")
+        self.process.stdin.flush()
+        report = json.loads(self.process.stdout.readline())
+        duration = (time.perf_counter_ns() - start) / 1_000_000
+        assert report["id"] == self.sequence, report
+        return report, duration
+
+    def close(self):
+        self.process.stdin.close()
+        self.process.wait(timeout=10)
 
 
 def main():
@@ -79,49 +114,58 @@ def main():
                 hashlib.sha256(expected).hexdigest(),
                 source.stat().st_size,
             )
-        for workload, details in workloads.items():
-            script = root / f"workload_{workload}.py"
-            script.write_text(details[0])
-            for repetition in range(-1, 7):  # one discarded warmup per mode
-                modes = list(MODES)
-                rng.shuffle(modes)
-                for mode in modes:
-                    if mode == "cpython":
-                        command = [python, str(script)]
-                    elif mode.startswith("pynox_python"):
-                        command = [str(BINARY), "python"]
-                        if mode.endswith("_json"):
-                            command += ["--optimize-json"]
-                        command += [str(script)]
-                    else:
-                        command = [str(BINARY), f"--allow-read={root}", f"--allow-write={root}"]
-                        if mode.endswith("_json"):
-                            command += ["--optimize-json"]
-                        command += [str(script)]
-                    start = time.perf_counter_ns()
-                    result = subprocess.run(command, text=True, capture_output=True, timeout=15)
-                    duration = (time.perf_counter_ns() - start) / 1_000_000
-                    assert result.returncode == 0 and not result.stderr, result
-                    output = result.stdout
-                    if mode.startswith("sandbox"):
-                        report = json.loads(output)
-                        assert report["exit"] == 0, report
-                        output = report["stdout"]
-                    assert output == details[1], (workload, mode, output)
-                    if workload.startswith("json"):
-                        assert (
-                            hashlib.sha256((root / "output.json").read_bytes()).hexdigest()
-                            == details[2]
-                        )
-                    if repetition >= 0:
-                        cases.append(
-                            {
-                                "workload": workload,
-                                "mode": mode,
-                                "round": repetition,
-                                "milliseconds": duration,
-                            }
-                        )
+        pool = Pool()
+        try:
+            for workload, details in workloads.items():
+                script = root / f"workload_{workload}.py"
+                script.write_text(details[0])
+                for repetition in range(-1, 7):  # one discarded warmup per mode
+                    modes = list(MODES)
+                    rng.shuffle(modes)
+                    for mode in modes:
+                        if mode == "pool":
+                            report, duration = pool.run(script, root)
+                            assert report["exit"] == 0, report
+                            output = report["stdout"]
+                        else:
+                            if mode == "cpython":
+                                command = [python, str(script)]
+                            elif mode == "pynox":
+                                command = [str(BINARY), str(script)]
+                            else:
+                                command = [
+                                    str(BINARY),
+                                    "sandbox",
+                                    f"--allow-read={root}",
+                                    f"--allow-write={root}",
+                                    str(script),
+                                ]
+                            start = time.perf_counter_ns()
+                            result = subprocess.run(
+                                command, text=True, capture_output=True, timeout=15
+                            )
+                            duration = (time.perf_counter_ns() - start) / 1_000_000
+                            assert result.returncode == 0 and not result.stderr, result
+                            output = result.stdout
+                            if mode == "sandbox":
+                                report = json.loads(output)
+                                assert report["exit"] == 0, report
+                                output = report["stdout"]
+                        assert output == details[1], (workload, mode, output)
+                        if workload.startswith("json"):
+                            digest = hashlib.sha256((root / "output.json").read_bytes())
+                            assert digest.hexdigest() == details[2], (workload, mode)
+                        if repetition >= 0:
+                            cases.append(
+                                {
+                                    "workload": workload,
+                                    "mode": mode,
+                                    "round": repetition,
+                                    "milliseconds": duration,
+                                }
+                            )
+        finally:
+            pool.close()
         summary = []
         for workload in workloads:
             baseline = statistics.median(
@@ -149,10 +193,16 @@ def main():
             "runtime": info,
             "measured_at": datetime.now(timezone.utc).isoformat(),
             "python_build": build,
-            "linkage": "Stock CPython executable versus embedded shared libpython; use the Pynox Python control to separate embedding effects",
+            "modes": {
+                "cpython": "Stock CPython executable from the same distribution (static libpython)",
+                "pynox": "`pynox script.py`: embedded shared libpython, transparent optimizations",
+                "sandbox": "`pynox sandbox`: new supervised process, Landlock and seccomp, JSON result",
+                "pool": "`pynox pool --workers=1`: request/response latency of a forked child "
+                "from a warm template, measured by the client",
+            },
             "platform": platform.platform(),
             "affinity": affinity,
-            "method": "New process, seven shuffled rounds, one discarded warmup; warm filesystem; no fsync",
+            "method": "Seven shuffled rounds, one discarded warmup; warm filesystem; no fsync",
             "p95_method": "Nearest rank; with seven observations p95 is the maximum",
             "memory": "Not measured in this run; see historical research for prior observations",
             "input_bytes": {
@@ -160,7 +210,12 @@ def main():
             },
             "sources": {
                 str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-                for p in [Path(__file__), BINARY, *(ROOT / "src").glob("*")]
+                for p in [
+                    Path(__file__),
+                    BINARY,
+                    *sorted((ROOT / "src").rglob("*.rs")),
+                    *sorted((ROOT / "python").rglob("*.py")),
+                ]
                 if p.is_file()
             },
             "cases": cases,
@@ -171,7 +226,7 @@ def main():
     destination.write_text(json.dumps(report, indent=2) + "\n")
     for row in summary:
         print(
-            f"{row['workload']:14} {row['mode']:20} "
+            f"{row['workload']:14} {row['mode']:10} "
             f"{row['p50_ms']:8.2f} ms  {row['speedup_vs_cpython']:.2f}x"
         )
     print(destination)

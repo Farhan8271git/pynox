@@ -1,13 +1,10 @@
-"""Native runtime contracts, including explicit macOS sandbox refusal."""
+"""Runtime contracts for the default Python mode and the capability probe."""
 
 import importlib.util
 import json
-import platform
 import subprocess
 import sysconfig
-import tempfile
 import unittest
-from pathlib import Path
 
 import test_runtime as runtime
 
@@ -16,12 +13,11 @@ class PortabilityTests(unittest.TestCase):
     def test_doctor_reports_runtime_and_sandbox_separately(self):
         doctor = json.loads(subprocess.check_output([runtime.BINARY, "doctor"]))
         self.assertTrue(doctor["runtime_supported"])
-        self.assertEqual(doctor["sandbox_supported"], platform.system() == "Linux")
-        architecture = platform.machine().replace("arm64", "aarch64")
-        self.assertEqual(doctor["architecture"], architecture)
-        self.assertTrue(doctor["platform"].endswith(f"-{architecture}"))
+        self.assertIn("sandbox_supported", doctor)
+        self.assertIn(doctor["platform"].rsplit("-", 1)[0], ("linux-gnu", "linux-musl"))
+        self.assertTrue(doctor["platform"].endswith(f"-{doctor['architecture']}"))
 
-    def test_native_python_runs_asyncio_and_standard_library_extensions(self):
+    def test_default_mode_runs_asyncio_and_standard_library_extensions(self):
         source = (
             "import asyncio, ssl, sqlite3, zlib, json\n"
             "async def main():\n"
@@ -29,13 +25,13 @@ class PortabilityTests(unittest.TestCase):
             "    return sqlite3.connect(':memory:').execute('select 42').fetchone()[0]\n"
             "print(json.dumps({'result': asyncio.run(main())}))\n"
         )
-        output = subprocess.check_output([runtime.BINARY, "python", "-I", "-c", source], text=True)
+        output = subprocess.check_output([runtime.BINARY, "-I", "-c", source], text=True)
         self.assertEqual(json.loads(output), {"result": 42})
 
     @unittest.skipUnless(
         importlib.util.find_spec("pydantic"), "Install integration test dependencies"
     )
-    def test_native_python_imports_pydantic_extension(self):
+    def test_default_mode_imports_pydantic_extension(self):
         packages = sysconfig.get_path("purelib")
         source = (
             f"import sys; sys.path.insert(0, {packages!r})\n"
@@ -47,25 +43,3 @@ class PortabilityTests(unittest.TestCase):
             [runtime.BINARY, "python", "-I", "-S", "-c", source], text=True
         )
         self.assertEqual(json.loads(output), [1, 2])
-
-    @unittest.skipUnless(platform.system() == "Darwin", "macOS runtime-only contract")
-    def test_sandbox_commands_refuse_to_execute_code(self):
-        with tempfile.TemporaryDirectory(prefix="pynox-macos-") as temporary:
-            root = Path(temporary)
-            marker = root / "executed"
-            script = root / "task.py"
-            script.write_text(f"open({str(marker)!r}, 'w').write('unexpected execution')\n")
-            for args in ([str(script)], ["run", str(script)], ["pool", "--workers=1"]):
-                with self.subTest(args=args):
-                    result = subprocess.run(
-                        [runtime.BINARY, *args],
-                        input=json.dumps({"script": str(script)}) + "\n",
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                    )
-                    self.assertEqual(result.returncode, 125, result)
-                    self.assertEqual(
-                        json.loads(result.stdout)["error"]["type"], "SandboxUnavailable"
-                    )
-                    self.assertFalse(marker.exists())

@@ -1,5 +1,5 @@
 site_name = "Pynox"
-site_description = "Python execution with explicit permissions and native optimizations"
+site_description = "The Python runtime for agents: kernel sandbox, warm pool, transparent optimizations"
 nav = [
   { "Overview" = "index.md" },
   { "Commands" = "usage.md" },

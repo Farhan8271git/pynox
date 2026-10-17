@@ -18,33 +18,11 @@ def run(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
-def patch_loader(binary, home, os_name):
-    if os_name == "linux":
-        subprocess.run(["patchelf", "--set-rpath", "$ORIGIN/../python/lib", binary], check=True)
-        return
-    for line in run("otool", "-L", str(binary)).splitlines()[1:]:
-        dependency = line.strip().split(" (", 1)[0]
-        if "libpython" in Path(dependency).name:
-            subprocess.run(
-                [
-                    "install_name_tool",
-                    "-change",
-                    dependency,
-                    f"@executable_path/../python/lib/{Path(dependency).name}",
-                    binary,
-                ],
-                check=True,
-            )
-    commands = run("otool", "-l", str(binary))
-    for path in re.findall(r"cmd LC_RPATH\n.*?\n\s*path (.+?) \(offset", commands):
-        if path.startswith(str(home)):
-            subprocess.run(["install_name_tool", "-delete_rpath", path, binary], check=True)
-    subprocess.run(["codesign", "--force", "--sign", "-", binary], check=True)
+def patch_loader(binary):
+    subprocess.run(["patchelf", "--set-rpath", "$ORIGIN/../python/lib", binary], check=True)
 
 
 def libc_metadata(bundle, tag):
-    if tag.startswith("macos-"):
-        return None
     if tag.startswith("linux-musl-"):
         return {"family": "musl", "minimum": "1.2"}
     versions = {(2, 0)}
@@ -90,11 +68,11 @@ def main():
         ):
             raise RuntimeError(f"Use a clean managed CPython; unexpected package: {item.name}")
     tag = info["platform"]
-    os_name = info["os"]
+    assert info["os"] == "linux", info
     name = f"pynox-{version}-{abi}-{tag}"
     output = ROOT / "dist"
     output.mkdir(exist_ok=True)
-    if os_name == "linux" and not shutil.which("patchelf"):
+    if not shutil.which("patchelf"):
         raise SystemExit("Run with uv run --locked python scripts/package.py")
     with tempfile.TemporaryDirectory(prefix="pynox-package-") as temporary:
         staging = Path(temporary).resolve()
@@ -112,7 +90,7 @@ def main():
             bundle / "examples",
             ignore=shutil.ignore_patterns("out", "__pycache__"),
         )
-        patch_loader(bundle / "bin/pynox", home, os_name)
+        patch_loader(bundle / "bin/pynox")
         for link in bundle.rglob("*"):
             if link.is_symlink() and not link.resolve().is_relative_to(bundle.resolve()):
                 raise RuntimeError(f"Bundle symlink escapes release: {link}")
@@ -120,7 +98,7 @@ def main():
             "pynox": version,
             "python": info["python"]["version"],
             "architecture": info["architecture"],
-            "os": os_name,
+            "os": "linux",
             "platform": tag,
             "libc": libc_metadata(bundle, tag),
             "sandbox": info["sandbox_supported"],
@@ -139,29 +117,15 @@ def main():
         relocated = moved / "bin/pynox"
         probe = json.loads(run(str(relocated), "doctor"))
         assert Path(probe["python"]["home"]) == moved / "python"
-        if os_name == "linux":
-            loaded_libraries = (
-                "import pathlib; libraries = pathlib.Path('/proc/self/maps').read_text()"
-            )
-        else:
-            loaded_libraries = (
-                "import ctypes; dyld = ctypes.CDLL(None); "
-                "dyld._dyld_image_count.restype = ctypes.c_uint; "
-                "dyld._dyld_get_image_name.argtypes = [ctypes.c_uint]; "
-                "dyld._dyld_get_image_name.restype = ctypes.c_char_p; "
-                "libraries = '\\n'.join(dyld._dyld_get_image_name(i).decode() "
-                "for i in range(dyld._dyld_image_count()))"
-            )
+        loaded_libraries = "import pathlib; libraries = pathlib.Path('/proc/self/maps').read_text()"
         run(
             str(relocated),
-            "python",
             "-I",
             "-c",
             loaded_libraries + f"; assert {str(moved / 'python/lib/libpython')!r} in libraries",
         )
         run(
             str(relocated),
-            "python",
             "-I",
             "-c",
             f"import ssl, sqlite3, zlib, sys; assert '.'.join(map(str, sys.version_info[:2])) == {major_minor!r}",
@@ -179,14 +143,11 @@ def main():
             "else:\n"
             "    raise AssertionError('sandbox absent')\n"
         )
-        if os_name == "linux":
-            report = json.loads(run(str(relocated), str(script)))
-            assert report["exit"] == 0 and report["stdout"] == "sandbox enforced\n", report
-        else:
-            rejected = subprocess.run([relocated, script], capture_output=True, text=True)
-            report = json.loads(rejected.stdout)
-            assert rejected.returncode == 125
-            assert report["error"]["type"] == "SandboxUnavailable", report
+        report = json.loads(run(str(relocated), "sandbox", str(script)))
+        assert report["exit"] == 0 and report["stdout"] == "sandbox enforced\n", report
+        # The default mode is plain Python: the same script must read the file.
+        plain = subprocess.run([relocated, script], capture_output=True, text=True)
+        assert plain.returncode == 1 and "sandbox absent" in plain.stderr, plain
         archive = output / f"{name}.tar.gz"
         epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
 

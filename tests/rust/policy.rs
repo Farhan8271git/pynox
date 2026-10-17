@@ -2,7 +2,7 @@ use super::*;
 
 fn example_cli() -> Cli {
     Cli::try_parse_from([
-        "pynox",
+        "sandbox",
         concat!(env!("CARGO_MANIFEST_DIR"), "/examples/hello.py"),
     ])
     .unwrap()
@@ -72,7 +72,7 @@ fn invalid_or_overflowing_memory_limits_are_rejected() {
 #[test]
 fn script_arguments_cannot_turn_into_runtime_permissions() {
     let cli = Cli::try_parse_from([
-        "pynox",
+        "sandbox",
         "--timeout=2s",
         "app.py",
         "--allow-network",
@@ -105,11 +105,11 @@ fn malformed_and_loader_environment_names_are_rejected() {
     ] {
         let mut cli = example_cli();
         cli.allow_env.push(name.into());
-        assert!(Policy::from_cli(&cli).is_err(), "{name:?}");
+        assert!(Policy::from_cli(&cli, None).is_err(), "{name:?}");
     }
     let mut cli = example_cli();
     cli.allow_env.push("API_KEY".into());
-    assert!(Policy::from_cli(&cli).is_ok());
+    assert!(Policy::from_cli(&cli, None).is_ok());
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn write_grants_do_not_implicitly_allow_reads_or_packages() {
     let mut cli = example_cli();
     let script = PathBuf::from(&cli.command[0]);
     cli.allow_write.push(script.clone());
-    let policy = Policy::from_cli(&cli).unwrap();
+    let policy = Policy::from_cli(&cli, None).unwrap();
     assert_eq!(policy.allow_write, [script.canonicalize().unwrap()]);
     assert!(policy.allow_read.is_empty());
     assert!(policy.package_dirs.is_empty());
@@ -128,8 +128,26 @@ fn write_grants_do_not_implicitly_allow_reads_or_packages() {
 fn script_directories_and_package_files_are_rejected() {
     let mut cli = example_cli();
     cli.package_dir.push(PathBuf::from(&cli.command[0]));
-    assert!(Policy::from_cli(&cli).is_err());
+    assert!(Policy::from_cli(&cli, None).is_err());
     cli.package_dir.clear();
     cli.command[0] = env!("CARGO_MANIFEST_DIR").into();
-    assert!(Policy::from_cli(&cli).is_err());
+    assert!(Policy::from_cli(&cli, None).is_err());
+}
+
+#[test]
+fn inline_code_uses_a_label_and_grants_no_script_path() {
+    let cli = Cli::try_parse_from(["sandbox", "step.py", "arg"]).unwrap();
+    let policy = Policy::from_cli(&cli, Some("print(1)".into())).unwrap();
+    assert_eq!(policy.script, PathBuf::from("step.py"));
+    assert_eq!(policy.source.as_deref(), Some("print(1)"));
+    assert_eq!(policy.args, ["arg"]);
+    for name in ["", "../x.py", "a/b.py"] {
+        let cli = Cli::try_parse_from(["sandbox", name]).unwrap();
+        assert!(
+            Policy::from_cli(&cli, Some("print(1)".into())).is_err(),
+            "{name:?}"
+        );
+    }
+    // Without inline code the same label must be an existing file.
+    assert!(Policy::from_cli(&cli, None).is_err());
 }

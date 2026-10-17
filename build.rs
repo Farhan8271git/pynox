@@ -41,11 +41,38 @@ print(json.dumps({
         info["libdir"].as_str().unwrap()
     );
     // Release bundles place the matching CPython beside bin/pynox.
-    if env::var("CARGO_CFG_TARGET_OS").unwrap() == "macos" {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../python/lib");
-    } else {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../python/lib");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../python/lib");
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+    fs::write(out_dir.join("python.json"), output.stdout).unwrap();
+    // Embedded Python is compiled here, by the CPython the binary links, and
+    // loaded at runtime with marshal like a .pyc. Compiling source at startup
+    // would be the interpreter's first use of the compiler and costs about a
+    // millisecond per process; loading bytecode costs microseconds.
+    for (name, filename) in [
+        ("bootstrap", "<pynox-bootstrap>"),
+        ("optimizations", "<pynox-runtime>"),
+        ("json_runtime", "<pynox-json>"),
+    ] {
+        let source = format!("python/pynox/{name}.py");
+        println!("cargo:rerun-if-changed={source}");
+        let compiled = Command::new(&python)
+            .args([
+                "-I",
+                "-S",
+                "-c",
+                "import marshal, sys\n\
+                 source = open(sys.argv[1], encoding='utf-8').read()\n\
+                 sys.stdout.buffer.write(marshal.dumps(compile(source, sys.argv[2], 'exec')))",
+                &source,
+                filename,
+            ])
+            .output()
+            .expect("Cannot compile embedded Python");
+        assert!(
+            compiled.status.success(),
+            "Compiling {source} failed: {}",
+            String::from_utf8_lossy(&compiled.stderr)
+        );
+        fs::write(out_dir.join(format!("{name}.marshal")), compiled.stdout).unwrap();
     }
-    let destination = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("python.json");
-    fs::write(destination, output.stdout).unwrap();
 }

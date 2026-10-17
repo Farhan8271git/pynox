@@ -10,17 +10,12 @@ local_archive=""
 architecture="$(uname -m)"
 [[ "$architecture" != arm64 ]] || architecture=aarch64
 [[ "$architecture" == x86_64 || "$architecture" == aarch64 ]] || { echo "Unsupported architecture" >&2; exit 1; }
-case "$(uname -s)" in
-    Darwin) platform="macos-$architecture" ;;
-    Linux)
-        if [[ -e "/lib/ld-musl-$architecture.so.1" ]]; then
-            platform="linux-musl-$architecture"
-        else
-            platform="linux-gnu-$architecture"
-        fi
-        ;;
-    *) echo "Pynox requires Linux or macOS" >&2; exit 1 ;;
-esac
+[[ "$(uname -s)" == Linux ]] || { echo "Pynox requires Linux" >&2; exit 1; }
+if [[ -e "/lib/ld-musl-$architecture.so.1" ]]; then
+    platform="linux-musl-$architecture"
+else
+    platform="linux-gnu-$architecture"
+fi
 if [[ "${1:-}" == "--archive" && $# == 2 ]]; then
     local_archive="$2"
 elif [[ $# != 0 ]]; then
@@ -29,7 +24,7 @@ elif [[ $# != 0 ]]; then
 fi
 if [[ -n "$local_archive" ]]; then
     archive_name="$(basename "$local_archive")"
-    if [[ "$archive_name" =~ ^pynox-"${version}"-cp(311|312|313|314|315)-((linux-(gnu|musl)|macos)-(x86_64|aarch64))\.tar\.gz$ ]]; then
+    if [[ "$archive_name" =~ ^pynox-"${version}"-cp(311|312|313|314|315)-(linux-(gnu|musl)-(x86_64|aarch64))\.tar\.gz$ ]]; then
         archive_abi="${BASH_REMATCH[1]}"
         archive_platform="${BASH_REMATCH[2]}"
         [[ "$archive_platform" == "$platform" ]] || { echo "Archive platform does not match this host ($platform)" >&2; exit 2; }

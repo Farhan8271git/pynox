@@ -44,7 +44,7 @@ class FrameworkTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     runtime.BINARY,
-                    "--optimize-json",
+                    "sandbox",
                     f"--package-dir={sysconfig.get_path('purelib')}",
                     script,
                 ],

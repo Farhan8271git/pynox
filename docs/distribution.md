@@ -6,16 +6,18 @@ Every binary embeds one Python minor and targets one OS, libc and architecture.
 
 ## Platform matrix
 
+Pynox is **Linux only**. The sandbox is built on Landlock and seccomp, and the
+pre-alpha keeps its matrix where that differentiator exists. On macOS, use a
+Linux container or VM. See ADR 010.
+
 | Bundle platform | Build environment | Execution modes |
 | --- | --- | --- |
-| `linux-gnu-x86_64` | manylinux_2_28 x86_64 | Sandbox, pool, Python |
-| `linux-gnu-aarch64` | manylinux_2_28 ARM64 | Sandbox, pool, Python |
-| `linux-musl-x86_64` | musllinux_1_2 x86_64 | Sandbox, pool, Python |
-| `linux-musl-aarch64` | musllinux_1_2 ARM64 | Sandbox, pool, Python |
-| `macos-x86_64` | Native Intel runner | Python only |
-| `macos-aarch64` | Native Apple Silicon runner | Python only |
+| `linux-gnu-x86_64` | manylinux_2_28 x86_64 | Python, sandbox, pool |
+| `linux-gnu-aarch64` | manylinux_2_28 ARM64 | Python, sandbox, pool |
+| `linux-musl-x86_64` | musllinux_1_2 x86_64 | Python, sandbox, pool |
+| `linux-musl-aarch64` | musllinux_1_2 ARM64 | Python, sandbox, pool |
 
-The release matrix has **30 variants**: six platforms × five Python versions.
+The release matrix has **20 variants**: four platforms × five Python versions.
 Manylinux and musllinux are Python wheel compatibility policies and build
 environments. Pynox uses their containers to build executable bundles; the
 archives themselves are not wheels.
@@ -30,13 +32,6 @@ The libc baseline and kernel requirements are separate. Sandboxed execution
 still needs Landlock ABI >= 3 and the kernel interfaces described in the
 [sandbox contract](sandbox.md). An older userspace on a recent kernel is valid;
 an old kernel does not gain sandbox support from a manylinux build.
-
-macOS release builds target **macOS 13 or newer**. They provide native
-`pynox python`, version reporting, optional JSON optimization and runtime
-diagnostics. Sandbox and pool requests return `SandboxUnavailable` with exit
-125 before executing task code. A macOS isolation backend remains future work.
-Bundles use relative Mach-O library references and ad-hoc code signing;
-Developer ID signing and notarization are not configured.
 
 ## Building from source
 
@@ -85,10 +80,10 @@ Pass the archive printed by the build to the installer:
 bash scripts/install.sh --archive dist/pynox-0.1.0-cp311-linux-gnu-aarch64.tar.gz
 ```
 
-The installer checks OS, architecture and libc, then verifies the checksum.
-Local archive mode infers Python from the filename and rejects conflicting
-`PYNOX_PYTHON_VERSION` selections. A glibc archive cannot be installed as a musl
-or macOS runtime.
+The installer checks that the host is Linux with a matching architecture and
+libc, then verifies the checksum. Local archive mode infers Python from the
+filename and rejects conflicting `PYNOX_PYTHON_VERSION` selections. A glibc
+archive cannot be installed on a musl host, or the reverse.
 
 Without `--archive`, the installer downloads the matching platform from GitHub
 release assets. These must first be published. Configuration:
@@ -108,6 +103,7 @@ To switch back, point the symlink to a previous variant's `bin/pynox`.
 Earlier pre-alpha directory layouts are preserved.
 
 Use uv or other external tooling to resolve application dependencies for the
-matching CPython, OS, libc and architecture. On Linux, grant installed packages
-with `--package-dir` for restricted tasks. Project environment discovery and a
-built-in dependency resolver remain future work.
+matching CPython, libc and architecture. Grant installed packages with
+`--package-dir` for sandboxed tasks. A `pip install pynox` package delivering
+the binary, project environment discovery and a built-in dependency resolver
+remain future work.

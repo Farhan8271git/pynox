@@ -8,7 +8,7 @@ fn policy() -> Policy {
         concat!(env!("CARGO_MANIFEST_DIR"), "/examples/hello.py"),
     ])
     .unwrap();
-    Policy::from_cli(&cli).unwrap()
+    Policy::from_cli(&cli, None).unwrap()
 }
 
 fn result(status: i32, timed_out: bool, report: &[u8], truncated: bool) -> Value {

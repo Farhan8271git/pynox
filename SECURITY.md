@@ -1,7 +1,7 @@
 # Security scope
 
-Pynox's restricted mode enforces explicit capabilities using Linux Landlock
-and seccomp. The intended use is controlling Python automation and resource
+Pynox's sandbox modes, `pynox sandbox` and `pynox pool`, enforce explicit
+capabilities using Linux Landlock and seccomp. The intended use is controlling Python automation and resource
 usage. It is not a VM or a complete boundary against hostile native code.
 
 Filesystem contents, metadata visibility, network grants, inherited runtime
@@ -9,12 +9,11 @@ reads and limits are described in [the sandbox contract](docs/sandbox.md).
 Policy applies to Python and native extensions through kernel mediation.
 Unsupported or partially enforced Landlock configuration aborts execution.
 
-`pynox python` is explicitly unrestricted. Trusted pool preload runs before
+The default `pynox script.py` mode runs without a sandbox. Trusted pool preload runs before
 sandboxing; only operator-controlled modules belong there. No task may request
 preload, and writable task grants may not overlap preloaded runtime paths.
 Native extensions remain subject to their own fork/thread safety requirements.
-The Linux backend supports glibc and musl. macOS currently offers native Python
-mode only: restricted script and pool requests fail before executing task code.
+The backend supports Linux glibc and musl; Pynox does not build elsewhere.
 Runtime availability in `doctor` does not imply sandbox availability.
 
 The JSON diagnostic pipe is writable by the program and is not a trustworthy

@@ -1,41 +1,51 @@
 #[cfg(not(all(
-    any(target_os = "linux", target_os = "macos"),
+    target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 )))]
-compile_error!("Pynox requires Linux or macOS on x86_64 or aarch64");
+compile_error!("Pynox requires Linux on x86_64 or aarch64");
 
+mod capture;
+mod forkserver;
 mod native_json;
 mod policy;
-mod runtime;
-
-#[cfg(target_os = "linux")]
-mod capture;
-#[cfg(target_os = "linux")]
-mod forkserver;
-#[cfg(target_os = "linux")]
 mod pool;
-#[cfg(target_os = "linux")]
 mod preload;
-#[cfg(target_os = "linux")]
 mod runner;
-#[cfg(target_os = "linux")]
+mod runtime;
 mod sandbox;
-#[cfg(target_os = "linux")]
 mod worker;
 
 use clap::Parser;
 use policy::Cli;
 use serde_json::json;
 
+const HELP: &str = "\
+Pynox: a Python runtime for agents and scripts, with transparent optimizations and an optional sandbox
+
+Usage:
+  pynox [PYTHON_OPTIONS] SCRIPT [ARGS]   Run a script like `python`, with Pynox's optimizations
+  pynox -c CODE | -m MODULE              Any CPython command line works here
+  pynox sandbox [OPTIONS] SCRIPT [ARGS]  Run with explicit permissions and limits; prints a JSON result
+  pynox pool [OPTIONS]                   Sandboxed JSONL task pool for agents and services
+  pynox doctor                           Check runtime and kernel capabilities
+  pynox --version                        Show Pynox and CPython versions
+
+Run `pynox sandbox --help` or `pynox pool --help` for their options.
+`pynox python ...` is accepted as an alias for the default mode.";
+
 fn main() {
     let command = std::env::args().nth(1);
     match command.as_deref() {
-        Some("python") => std::process::exit(runtime::python()),
         Some("doctor") => std::process::exit(runtime::doctor()),
-        _ => {}
-    }
-    #[cfg(target_os = "linux")]
-    match command.as_deref() {
+        Some("--version" | "-V") => {
+            println!("pynox {}", runtime::cli_version());
+            return;
+        }
+        Some("--help" | "-h") => {
+            println!("{HELP}");
+            return;
+        }
+        Some("python") => std::process::exit(runtime::python(2)),
         Some("--internal-worker") => std::process::exit(worker::run(false)),
         Some("--internal-template") => std::process::exit(pool::template_main()),
         Some("pool") => {
@@ -49,52 +59,19 @@ fn main() {
             }
             return;
         }
-        _ => {}
+        Some("sandbox" | "run") => {}
+        // Anything that is not a Pynox command is CPython's own command line.
+        _ => std::process::exit(runtime::python(1)),
     }
-    #[cfg(target_os = "macos")]
-    if matches!(
-        command.as_deref(),
-        Some("pool" | "--internal-worker" | "--internal-template")
-    ) {
-        sandbox_unavailable();
-    }
-    let cli = if command.as_deref() == Some("run") {
-        Cli::parse_from(std::env::args().skip(1))
-    } else {
-        Cli::parse()
-    };
-    #[cfg(target_os = "linux")]
-    {
-        let start = std::time::Instant::now();
-        let result = runner::supervise(&cli, start).unwrap_or_else(|error| {
-            json!({
-                "exit": 125,
-                "error": {"type": "LauncherError", "message": format!("{error:#}")},
-                "stdout": "", "stderr": "", "duration_ms": start.elapsed().as_millis()
-            })
-        });
-        println!("{}", result);
-        std::process::exit(result["exit"].as_i64().unwrap_or(125) as i32);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let _ = cli;
-        sandbox_unavailable();
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn sandbox_unavailable() -> ! {
-    println!(
-        "{}",
+    let cli = Cli::parse_from(std::env::args().skip(1));
+    let start = std::time::Instant::now();
+    let result = runner::supervise(&cli, start).unwrap_or_else(|error| {
         json!({
-            "exit": 125, "stdout": "", "stderr": "",
-            "error": {
-                "type": "SandboxUnavailable",
-                "message": "Sandboxed execution and the pool are not available on macOS yet.",
-                "hint": "Use Linux for sandboxed tasks, or explicitly choose `pynox python` for unrestricted execution."
-            }
+            "exit": 125,
+            "error": {"type": "LauncherError", "message": format!("{error:#}")},
+            "stdout": "", "stderr": "", "duration_ms": start.elapsed().as_millis()
         })
-    );
-    std::process::exit(125);
+    });
+    println!("{}", result);
+    std::process::exit(result["exit"].as_i64().unwrap_or(125) as i32);
 }

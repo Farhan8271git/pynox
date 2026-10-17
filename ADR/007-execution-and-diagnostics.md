@@ -1,4 +1,4 @@
-# ADR 007: Structured diagnostics and explicit Python mode
+# ADR 007: Execution modes and structured diagnostics
 
 ## Status
 
@@ -6,30 +6,34 @@ Accepted — 2026-10-17.
 
 ## Context
 
-Automation benefits from bounded machine-readable results, useful error
-locations and explicit effective policy. Ordinary Python tooling expects
-stdout/stderr, CLI switches and exit codes. Mixing the two invisibly is confusing.
+Ordinary Python tooling expects stdout/stderr, CLI switches and exit codes.
+Agents need bounded machine-readable results with error locations and the
+effective policy. Mixing the two invisibly is confusing, and wrapping every
+Python invocation in JSON made the runtime unusable as `python`.
 
 ## Decision
 
-Restricted script execution returns one JSON result with captured streams,
-exit, duration, policy and concise structured errors. Preserve script location
-where possible and include actionable permission/limit hints. Pool responses
-use the same result shape plus request IDs.
+`pynox [PYTHON_OPTIONS] SCRIPT [ARGS]`, `-c` and `-m` are CPython's own
+command line with Pynox's optimizations installed; stdout, stderr and the
+exit status are Python's. `pynox python ...` is an alias. Anything that is
+not a Pynox command is passed to CPython.
 
-`pynox python` runs CPython's normal CLI without sandbox, capture or limits.
-Documentation and help state this distinction directly. `pynox doctor` reports
-runtime metadata and a capability probe; execution performs complete setup.
+`pynox sandbox` and `pynox pool` return one JSON result per task with
+captured streams, exit, duration, policy and a structured error carrying type,
+message, script location and actionable permission or limit hints. Pool
+responses add request IDs. `pynox doctor` reports runtime metadata, a
+Landlock probe and `sandbox_supported` separately from `runtime_supported`.
 
 ## Alternatives considered
 
-- Force JSON wrapping on every Python tool: breaks conventional CLI integration.
-- Hide sandbox errors or print only tracebacks: poor automation diagnostics.
-- Treat task-generated diagnostic JSON as a security audit: untrustworthy.
+- JSON on every invocation: breaks conventional CLI integration.
+- Tracebacks only: poor automation diagnostics for a model to act on.
+- Treat task-generated diagnostic JSON as a security audit: untrustworthy,
+  since the task can write to its own report channel.
 
 ## Consequences
 
-Scripts retain Python syntax but the restricted launch interface is an explicit
-execution contract, not byte-for-byte replacement of the CPython CLI.
-Normal mode retains ordinary tracebacks. Structured error reporting does not
-change the application's exception classes or language semantics.
+Default execution has no sandbox, as with `python`. The sandbox launch
+interface is an explicit execution contract, not byte-for-byte CPython CLI.
+Partial output before a `RecursionError` differs by the runner's frame.
+Passthrough stdout for `pynox sandbox` is a possible later addition.

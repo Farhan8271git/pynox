@@ -1,4 +1,4 @@
-//! CPython integration shared by restricted workers and explicit Python mode.
+//! CPython integration shared by sandboxed workers and the default Python mode.
 use crate::{native_json, policy::python_info};
 use anyhow::{bail, Result};
 use pyo3_ffi as py;
@@ -30,23 +30,96 @@ pub unsafe fn register_native() -> Result<()> {
     Ok(())
 }
 
-pub fn install_json() -> Result<()> {
-    let source = serde_json::to_string(include_str!("json_runtime.py"))?;
-    let bootstrap = CString::new(format!(
-        "import types as _t, sys as _s\n\
-         _m = _t.ModuleType('_pynox_json_runtime')\n\
-         _s.modules[_m.__name__] = _m\n\
-         exec(compile({source}, '<pynox-json>', 'exec'), _m.__dict__)\n\
-         _m.install()\ndel _m, _t, _s\n"
-    ))?;
-    if unsafe { py::PyRun_SimpleString(bootstrap.as_ptr()) } != 0 {
-        bail!("Cannot install JSON optimization");
+/// Embedded Python, precompiled by build.rs with the linked CPython.
+pub const BOOTSTRAP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/bootstrap.marshal"));
+const OPTIMIZATIONS: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/optimizations.marshal"));
+const JSON_RUNTIME: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/json_runtime.marshal"));
+
+/// Load a precompiled code object. The caller holds the GIL and owns the result.
+pub unsafe fn load_code(bytecode: &[u8], what: &str) -> Result<*mut py::PyObject> {
+    let code =
+        py::PyMarshal_ReadObjectFromString(bytecode.as_ptr().cast(), bytecode.len() as isize);
+    if code.is_null() {
+        py::PyErr_Print();
+        bail!("Cannot load {what}");
     }
+    Ok(code)
+}
+
+/// Execute precompiled code with `globals` as its module namespace.
+pub unsafe fn run_code(bytecode: &[u8], globals: *mut py::PyObject, what: &str) -> Result<()> {
+    let code = load_code(bytecode, what)?;
+    if py::PyDict_GetItemString(globals, c"__builtins__".as_ptr()).is_null()
+        && py::PyDict_SetItemString(globals, c"__builtins__".as_ptr(), py::PyEval_GetBuiltins()) < 0
+    {
+        py::Py_DECREF(code);
+        bail!("Cannot prepare namespace for {what}");
+    }
+    let result = py::PyEval_EvalCode(code, globals, globals);
+    py::Py_DECREF(code);
+    if result.is_null() {
+        py::PyErr_Print();
+        bail!("{what} failed");
+    }
+    py::Py_DECREF(result);
     Ok(())
 }
 
-pub fn python() -> i32 {
-    match run_python() {
+/// Install the transparent optimizations once, before any user code runs.
+/// Patches apply lazily when the application imports their target module, so
+/// startup pays only for registering a finder from precompiled bytecode.
+pub fn install_optimizations() -> Result<()> {
+    unsafe {
+        let module = py::PyModule_New(c"_pynox_runtime".as_ptr());
+        if module.is_null() {
+            bail!("Cannot create Pynox runtime module");
+        }
+        let outcome = (|| -> Result<()> {
+            run_code(
+                OPTIMIZATIONS,
+                py::PyModule_GetDict(module),
+                "Pynox runtime bootstrap",
+            )?;
+            if py::PyDict_SetItemString(
+                py::PyImport_GetModuleDict(),
+                c"_pynox_runtime".as_ptr(),
+                module,
+            ) < 0
+            {
+                bail!("Cannot register Pynox runtime module");
+            }
+            let install = py::PyObject_GetAttrString(module, c"install".as_ptr());
+            if install.is_null() {
+                py::PyErr_Clear();
+                bail!("Pynox runtime bootstrap has no install function");
+            }
+            let result = match load_code(JSON_RUNTIME, "JSON optimization") {
+                Ok(json) => {
+                    let result = py::PyObject_CallOneArg(install, json);
+                    py::Py_DECREF(json);
+                    result
+                }
+                Err(error) => {
+                    py::Py_DECREF(install);
+                    return Err(error);
+                }
+            };
+            py::Py_DECREF(install);
+            if result.is_null() {
+                py::PyErr_Print();
+                bail!("Cannot install runtime optimizations");
+            }
+            py::Py_DECREF(result);
+            Ok(())
+        })();
+        py::Py_DECREF(module);
+        outcome
+    }
+}
+
+/// Run CPython's own command line, starting at argument `skip`.
+pub fn python(skip: usize) -> i32 {
+    match run_python(skip) {
         Ok(code) => code,
         Err(error) => {
             eprintln!("pynox: {error:#}");
@@ -55,18 +128,9 @@ pub fn python() -> i32 {
     }
 }
 
-fn run_python() -> Result<i32> {
+fn run_python(skip: usize) -> Result<i32> {
     let info = python_info();
-    let mut arguments = std::env::args_os().skip(2).collect::<Vec<_>>();
-    let optimize = arguments
-        .first()
-        .is_some_and(|arg| arg == "--optimize-json");
-    if optimize {
-        arguments.remove(0);
-    }
-    if arguments.first().is_some_and(|arg| arg == "--") {
-        arguments.remove(0);
-    }
+    let mut arguments = std::env::args_os().skip(skip).collect::<Vec<_>>();
     arguments.insert(0, info.executable.clone().into_os_string());
     let args = arguments
         .iter()
@@ -99,18 +163,15 @@ fn run_python() -> Result<i32> {
         if py::PyStatus_Exception(status) != 0 {
             py::Py_ExitStatusException(status);
         }
-        if optimize {
-            if let Err(error) = install_json() {
-                py::Py_FinalizeEx();
-                return Err(error);
-            }
+        if let Err(error) = install_optimizations() {
+            py::Py_FinalizeEx();
+            return Err(error);
         }
         Ok(py::Py_RunMain())
     }
 }
 
 pub fn doctor() -> i32 {
-    #[cfg(target_os = "linux")]
     let abi = unsafe {
         libc::syscall(
             libc::SYS_landlock_create_ruleset,
@@ -119,24 +180,15 @@ pub fn doctor() -> i32 {
             1u32,
         )
     };
-    #[cfg(target_os = "macos")]
-    let abi = -1i64;
     let python = python_info();
     let runtime_available = python.stdlib.is_dir() && python.executable.is_file();
-    let sandbox_available = cfg!(target_os = "linux") && abi >= 3;
-    let available = runtime_available && (cfg!(target_os = "macos") || sandbox_available);
-    let family = if cfg!(target_os = "macos") {
-        "macos"
-    } else if cfg!(target_env = "musl") {
+    let sandbox_available = abi >= 3;
+    let family = if cfg!(target_env = "musl") {
         "linux-musl"
     } else {
         "linux-gnu"
     };
-    let note = if cfg!(target_os = "macos") {
-        "Native Python mode only. Sandboxed execution and the pool are unavailable."
-    } else {
-        "Landlock probe only; run a restricted script to verify complete sandbox setup."
-    };
+    let note = "Landlock probe only; run a sandboxed script to verify complete sandbox setup.";
     println!(
         "{}",
         serde_json::json!({
@@ -144,13 +196,13 @@ pub fn doctor() -> i32 {
             "python": python, "architecture": std::env::consts::ARCH,
             "os": std::env::consts::OS,
             "platform": format!("{family}-{}", std::env::consts::ARCH),
-            "landlock_abi": abi, "supported": available,
+            "landlock_abi": abi, "supported": runtime_available,
             "runtime_supported": runtime_available,
             "sandbox_supported": sandbox_available,
             "note": note
         })
     );
-    if available {
+    if runtime_available {
         0
     } else {
         125

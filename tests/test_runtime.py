@@ -60,7 +60,7 @@ class RuntimeTests(unittest.TestCase):
     def run_code(self, code, *flags, args=(), env=None, pass_fds=(), preexec_fn=None):
         self.script.write_text(textwrap.dedent(code))
         completed = subprocess.run(
-            [str(BINARY), *map(str, flags), str(self.script), *args],
+            [str(BINARY), "sandbox", *map(str, flags), str(self.script), *args],
             text=True,
             capture_output=True,
             timeout=15,
@@ -115,7 +115,6 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(result["policy"]["allow_read"], [])
         self.assertEqual(result["policy"]["network"], "deny")
         self.assertEqual(result["policy"]["timeout_ms"], 5000)
-        self.assertFalse(result["policy"]["optimize_json"])
 
     def test_allow_read_single_file(self):
         result = self.run_code(
