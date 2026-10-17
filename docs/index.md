@@ -3,8 +3,10 @@
 Pynox combines CPython compatibility, a Rust runtime and explicit Linux
 permissions. Ordinary Python scripts run without a project-specific import.
 
-Version 0.1 ships a restricted script runner, JSONL task pool, explicit
-unrestricted CPython CLI and an optional JSON optimization.
+Version 0.1 is **pre-alpha**, with build targets for CPython 3.11–3.15 (GIL),
+defaulting to 3.11. It includes a restricted script runner, JSONL task pool,
+explicit unrestricted CPython CLI and an optional JSON optimization. APIs and
+policies can change; this is an evaluation release.
 
 - [Commands and tasks](usage.md)
 - [Sandbox contract](sandbox.md)

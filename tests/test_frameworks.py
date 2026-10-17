@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import subprocess
+import sys
 import sysconfig
 import tempfile
 import unittest
@@ -17,6 +18,12 @@ import test_runtime as runtime
 )
 class FrameworkTests(unittest.TestCase):
     def test_validation_powertools_and_asyncio_under_sandbox(self):
+        doctor = json.loads(subprocess.check_output([runtime.BINARY, "doctor"]))
+        self.assertEqual(
+            doctor["python"]["major_minor"],
+            f"{sys.version_info.major}.{sys.version_info.minor}",
+            "Run tests with the same Python version as the Pynox binary",
+        )
         with tempfile.TemporaryDirectory() as temporary:
             script = Path(temporary) / "frameworks.py"
             script.write_text(

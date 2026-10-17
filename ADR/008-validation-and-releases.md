@@ -4,6 +4,8 @@
 
 Accepted — 2026-10-17.
 
+ADR 009 expands the initial Python matrix to 3.11–3.15 and marks releases pre-alpha.
+
 ## Context
 
 The repository accumulated independent experiments and provisional names.

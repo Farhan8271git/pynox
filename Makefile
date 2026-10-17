@@ -1,16 +1,20 @@
 .PHONY: setup build check test docs bundle clean distclean
+PYNOX_PYTHON_VERSION ?= $(shell cat .python-version)
+export PYNOX_PYTHON_VERSION
+UV_PYTHON ?= $(or $(PYO3_PYTHON),$(PYNOX_PYTHON_VERSION))
+export UV_PYTHON
 setup:
 	uv sync --locked
 build:
 	bash scripts/build.sh
 check:
 	cargo fmt --all -- --check
-	PYO3_PYTHON="$$(uv python find --system --managed-python "$$(cat .python-version)")" cargo clippy --locked --all-targets -- -D warnings
+	bash scripts/build.sh --check
 	uv run --locked ruff check src tests scripts examples
 	uv run --locked ruff format --check src tests scripts examples
 	uv run --locked python scripts/check_metadata.py
 test: build
-	uv run --locked pytest
+	uv run --locked --group integration pytest
 docs:
 	uv run --locked python scripts/prepare_docs.py
 	uv run --locked --group docs zensical build

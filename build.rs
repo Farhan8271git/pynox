@@ -10,8 +10,9 @@ fn main() {
             "-c",
             r#"
 import json, sys, sysconfig
-assert sys.implementation.name == "cpython" and sys.version_info[:2] == (3, 12), "Pynox 0.1 requires CPython 3.12"
+assert sys.implementation.name == "cpython" and (3, 11) <= sys.version_info[:2] <= (3, 15), "Pynox requires CPython 3.11 through 3.15"
 assert not sysconfig.get_config_var("Py_GIL_DISABLED"), "Pynox 0.1 requires the GIL build"
+assert sysconfig.get_config_var("Py_ENABLE_SHARED"), "Pynox requires a shared libpython"
 print(json.dumps({
     "home": sys.base_prefix,
     "executable": sys.executable,
@@ -22,12 +23,18 @@ print(json.dumps({
     ])),
     "libdir": sysconfig.get_config_var("LIBDIR"),
     "version": sys.version.split()[0],
+    "major_minor": f"{sys.version_info.major}.{sys.version_info.minor}",
+    "abi": f"cp{sys.version_info.major}{sys.version_info.minor}",
 }))
 "#,
         ])
         .output()
         .expect("Cannot inspect CPython; set PYO3_PYTHON to a Python with libpython");
-    assert!(output.status.success(), "CPython inspection failed");
+    assert!(
+        output.status.success(),
+        "CPython inspection failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let info: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     println!(
         "cargo:rustc-link-arg=-Wl,-rpath,{}",

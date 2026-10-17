@@ -4,6 +4,8 @@
 
 Accepted — 2026-10-17.
 
+The initial Python version scope below is amended by ADR 009 to 3.11–3.15.
+
 ## Context
 
 Python calls must reach native implementations without an RPC/serialization

@@ -20,4 +20,6 @@ not depend on trusting that report.
 
 For a vulnerability in a published repository, use GitHub private vulnerability
 reporting when enabled. Do not put secrets or working exploits in public issues.
-Version 0.1 is a developer release; no external security audit is claimed.
+Version 0.1 is pre-alpha and is not intended for production use; no external
+security audit is claimed. CPython 3.11–3.15 GIL builds are tested separately;
+free-threaded builds are rejected.

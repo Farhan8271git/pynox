@@ -7,14 +7,29 @@ execution mode applies filesystem permissions, network policy and resource
 limits through the Linux kernel. An explicit Python mode provides CPython's CLI.
 Application frameworks are installed by the user, not included in Pynox.
 
-**Version 0.1.0 is an initial developer release.** Supported target:
-Linux x86_64/aarch64, CPython 3.12 with GIL, Landlock ABI 3 or newer.
-The release pins CPython 3.12.14. Unsupported sandbox setup fails closed.
-This release does not claim that Python programs universally run faster.
+**Pre-alpha (0.1.0): for evaluation and development, not production use.**
+CLI, sandbox policies and distribution layout may change. Pynox builds against
+**CPython 3.11 through 3.15**, with the GIL, on Linux x86_64/aarch64.
+Each binary embeds one Python minor version; this is not a universal ABI binary.
+Landlock ABI 3 or newer is required for restricted execution, which fails closed
+when setup is unsupported. No universal Python speedup is claimed.
+
+| CPython | Pinned build | Role |
+| --- | --- | --- |
+| 3.11 | 3.11.17 | Minimum supported version and default |
+| 3.12 | 3.12.15 | Build and test target |
+| 3.13 | 3.13.16 | Build and test target |
+| 3.14 | 3.14.8 | Build and test target |
+| 3.15 | 3.15.0 | Build and test target |
+
+The pins live in [.python-versions](.python-versions). Python 3.11 remains in
+security support; supporting it broadens compatibility without targeting an
+end-of-life version. The pre-alpha status applies to Pynox, independently of the
+CPython release status.
 
 ## Build and run
 
-Development requires Rust and uv. `uv` obtains the pinned Python automatically.
+Development requires Rust and uv >= 0.13.1. `uv` obtains the pinned Python automatically.
 
 ```bash
 make setup
@@ -24,7 +39,20 @@ make build
 ```
 
 `pynox --version` (or `-V`) reports both versions:
-`pynox 0.1.0 (CPython 3.12.14)`.
+`pynox 0.1.0 (CPython 3.11.17)` for the default build.
+
+Choose another supported Python minor or an exact pinned version:
+
+```bash
+make build PYNOX_PYTHON_VERSION=3.14
+./target/release/pynox --version
+# pynox 0.1.0 (CPython 3.14.8)
+make test PYNOX_PYTHON_VERSION=3.14
+```
+
+Changing the selection rebuilds `target/release/pynox` for that Python.
+`PYO3_PYTHON=/path/to/python` can select a custom CPython with shared libpython;
+release bundles require the exact checked-in pins.
 
 Restricted execution returns a JSON result containing stdout, stderr, exit
 status, a concise error and the effective policy. The CLI exits with the result's
@@ -83,13 +111,16 @@ nor Rust installed. For a locally built first release:
 
 ```bash
 make bundle
-bash scripts/install.sh --archive dist/pynox-0.1.0-cp312-linux-$(uname -m).tar.gz
+bash scripts/install.sh --archive dist/pynox-0.1.0-cp311-linux-$(uname -m).tar.gz
 ~/.local/bin/pynox doctor
 ```
 
-The installer verifies the adjacent `.sha256`, installs a versioned directory
-and updates the CLI symlink. With no `--archive`, it fetches GitHub release
+The installer infers Python from the local archive name, verifies the adjacent
+`.sha256`, installs a directory keyed by Pynox version and Python ABI, and updates
+the CLI symlink. Builds for different Python versions can coexist.
+With no `--archive`, it fetches GitHub release
 assets from `PYNOX_REPOSITORY` (default `ferrumio/pynox`).
+Set `PYNOX_PYTHON_VERSION=3.14` to download the 3.14 variant (default: 3.11).
 Those assets must first be published; creating this source tree does not publish
 a release. Installation details and upgrade behavior are in
 [distribution](docs/distribution.md).
@@ -104,7 +135,9 @@ make docs
 
 GitHub workflows cover formatting, lint, actual kernel policy tests, CPython
 behavior comparisons, framework smoke tests, documentation and release bundles.
-They test both supported architectures. Native x86_64-only checks run on x86_64.
+The configured matrix has **five Python versions × two architectures**.
+Native x86_64-only checks run on x86_64. All variants are pre-alpha, and remote
+CI results only exist after the workflows run on GitHub.
 
 - [Architecture decisions](ADR/README.md)
 - [Sandbox contract](docs/sandbox.md)

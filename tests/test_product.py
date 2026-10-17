@@ -4,7 +4,6 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,8 +44,9 @@ class ProductTests(unittest.TestCase):
 
     def test_json_differential(self):
         source = runtime.ROOT / "tests/fixtures/json_contract.py"
+        doctor = json.loads(subprocess.check_output([runtime.BINARY, "doctor"]))
         base = subprocess.run(
-            [sys.executable, "-I", "-S", "-B", source],
+            [doctor["python"]["executable"], "-I", "-S", "-B", source],
             capture_output=True,
             text=True,
             check=True,

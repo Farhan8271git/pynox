@@ -68,6 +68,8 @@ pub struct PythonInfo {
     pub site_packages: Vec<PathBuf>,
     pub libdir: PathBuf,
     pub version: String,
+    pub major_minor: String,
+    pub abi: String,
 }
 
 pub fn python_info() -> PythonInfo {
@@ -77,10 +79,11 @@ pub fn python_info() -> PythonInfo {
     if let Ok(executable) = std::env::current_exe() {
         if let Some(root) = executable.parent().and_then(|bin| bin.parent()) {
             let home = root.join("python");
-            if home.join("lib/python3.12/os.py").is_file() {
+            let stdlib = home.join(format!("lib/python{}", info.major_minor));
+            if stdlib.join("os.py").is_file() {
                 info.home = home.clone();
-                info.executable = home.join("bin/python3.12");
-                info.stdlib = home.join("lib/python3.12");
+                info.executable = home.join(format!("bin/python{}", info.major_minor));
+                info.stdlib = stdlib;
                 info.platstdlib = info.stdlib.clone();
                 info.site_packages = vec![info.stdlib.join("site-packages")];
                 info.libdir = home.join("lib");

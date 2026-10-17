@@ -32,7 +32,7 @@ probe. Actual execution still checks all sandbox setup steps. `--version` and
 `-V` report both Pynox and the loaded CPython runtime, without initializing Python:
 
 ```text
-pynox 0.1.0 (CPython 3.12.14)
+pynox 0.1.0 (CPython 3.11.17)
 ```
 
 ## Pool

@@ -1,7 +1,8 @@
 # Contributing to Pynox
 
-Use the Rust toolchain in `rust-toolchain.toml`, uv and a Linux host with
-Landlock ABI >= 3. Development Python is pinned in `.python-version`.
+Use the Rust toolchain in `rust-toolchain.toml`, uv >= 0.13.1 and a Linux host with
+Landlock ABI >= 3. Default Python (3.11) is pinned in `.python-version`; the five
+build/test pins for 3.11–3.15 are in `.python-versions`.
 
 ```bash
 make setup
@@ -11,6 +12,13 @@ uv run --locked --group integration pytest
 make docs
 make bundle
 ```
+
+Select a version with `make test PYNOX_PYTHON_VERSION=3.15` or
+`make bundle PYNOX_PYTHON_VERSION=3.15`. The Makefile selects both the embedded
+engine and the Python test environment. Each build replaces the default binary;
+use `CARGO_TARGET_DIR` / `PYNOX_BIN` explicitly when keeping separate local builds.
+Every new minor needs ABI, behavior, real-kernel policy, framework and relocation
+validation. Free-threaded variants are not supported.
 
 `make clean` removes build/release artifacts, generated documentation and local
 caches. `make distclean` also removes `.venv`. Restore the development environment
@@ -35,10 +43,11 @@ format used in pydynox. Keep user-facing policy documentation in sync.
 
 1. Update Cargo.toml, pyproject.toml, installer default and CHANGELOG.md together.
 2. Regenerate Cargo.lock / uv.lock if affected and pass `make check`, tests,
-   docs and a relocated bundle test. Keep the CPython version pinned.
+   docs and relocated bundle tests across `.python-versions`. Keep every pin explicit.
 3. Push the reviewed change to main. A `vX.Y.Z` tag triggers release CI.
-4. CI reruns validation, builds native Linux x86_64/aarch64 bundles, checks tag
-   against Cargo version and uploads checksum files to a **draft** GitHub release.
+4. CI reruns validation for all five Pythons on Linux x86_64/aarch64, checks tag
+   against Cargo version and uploads ten bundles plus checksums to a **draft
+   prerelease**. Pynox remains pre-alpha even when CPython itself is stable.
 5. Review the draft's assets and notes, then publish it.
 
 The workflow derives its repository from GitHub context. Creating/configuring

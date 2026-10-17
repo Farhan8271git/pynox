@@ -2,6 +2,7 @@
 # Install a released or locally built bundle. No Python/Rust is required.
 set -euo pipefail
 version="${PYNOX_VERSION:-0.1.0}"
+python_minor="${PYNOX_PYTHON_VERSION:-3.11}"
 repository="${PYNOX_REPOSITORY:-ferrumio/pynox}"
 install_root="${PYNOX_INSTALL_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/pynox}"
 bin_dir="${PYNOX_BIN_DIR:-$HOME/.local/bin}"
@@ -12,12 +13,28 @@ elif [[ $# != 0 ]]; then
     echo "Usage: bash install.sh [--archive bundle.tar.gz]" >&2
     exit 2
 fi
+if [[ -n "$local_archive" ]]; then
+    archive_name="$(basename "$local_archive")"
+    if [[ "$archive_name" =~ ^pynox-"${version}"-cp(311|312|313|314|315)-linux-(x86_64|aarch64)\.tar\.gz$ ]]; then
+        archive_abi="${BASH_REMATCH[1]}"
+        archive_python="3.${archive_abi:1}"
+        if [[ -n "${PYNOX_PYTHON_VERSION:-}" && "$python_minor" != "$archive_python" ]]; then
+            echo "Archive Python version does not match PYNOX_PYTHON_VERSION" >&2
+            exit 2
+        fi
+        python_minor="$archive_python"
+    else
+        echo "Unrecognized Pynox archive name" >&2
+        exit 2
+    fi
+fi
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid PYNOX_VERSION" >&2; exit 2; }
+[[ "$python_minor" =~ ^3\.(11|12|13|14|15)$ ]] || { echo "Choose PYNOX_PYTHON_VERSION=3.11 through 3.15" >&2; exit 2; }
 [[ "$(uname -s)" == Linux ]] || { echo "Pynox 0.1 requires Linux" >&2; exit 1; }
 architecture="$(uname -m)"
 [[ "$architecture" == x86_64 || "$architecture" == aarch64 ]] || exit 1
-name="pynox-${version}-cp312-linux-${architecture}"
-destination="$install_root/versions/$version"
+name="pynox-${version}-cp${python_minor//./}-linux-${architecture}"
+destination="$install_root/versions/$version-cp${python_minor//./}"
 [[ ! -e "$destination" ]] || { echo "Version already installed: $destination" >&2; exit 1; }
 mkdir -p "$install_root/versions" "$bin_dir"
 staging="$(mktemp -d "$install_root/versions/.install-XXXXXXXX")"

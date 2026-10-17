@@ -19,18 +19,29 @@ def run(*args):
 
 
 def main():
-    binary = ROOT / "target/release/pynox"
+    binary = Path(os.environ.get("PYNOX_BIN", ROOT / "target/release/pynox")).resolve()
     info = json.loads(run(str(binary), "doctor"))
     version = info["version"]
-    assert info["python"]["version"] == (ROOT / ".python-version").read_text().strip()
+    assert info["python"]["version"] in (ROOT / ".python-versions").read_text().splitlines()
     home = Path(info["python"]["home"])
-    # A release must never accidentally ship a developer's installed frameworks.
-    for item in (home / "lib/python3.12/site-packages").iterdir():
-        if item.name not in ("README.txt", "pip", "__pycache__") and not (
-            item.name.startswith("pip-") and item.name.endswith(".dist-info")
+    major_minor = info["python"]["major_minor"]
+    abi = info["python"]["abi"]
+    # Preserve upstream bootstrap tooling (3.11 includes setuptools), not
+    # application frameworks installed into a developer's Python.
+    bootstrap = {
+        "README.txt",
+        "pip",
+        "setuptools",
+        "_distutils_hack",
+        "distutils-precedence.pth",
+        "__pycache__",
+    }
+    for item in (home / f"lib/python{major_minor}/site-packages").iterdir():
+        if item.name not in bootstrap and not (
+            item.name.startswith(("pip-", "setuptools-")) and item.name.endswith(".dist-info")
         ):
             raise RuntimeError(f"Use a clean managed CPython; unexpected package: {item.name}")
-    name = f"pynox-{version}-cp312-linux-{platform.machine()}"
+    name = f"pynox-{version}-{abi}-linux-{platform.machine()}"
     output = ROOT / "dist"
     output.mkdir(exist_ok=True)
     if not shutil.which("patchelf"):
@@ -63,7 +74,7 @@ def main():
             "python": info["python"]["version"],
             "architecture": platform.machine(),
             "os": "linux",
-            "abi": "cp312",
+            "abi": abi,
             "packages": "CPython distribution only; application dependencies are not bundled",
             "files": {
                 str(p.relative_to(bundle)): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -92,7 +103,7 @@ def main():
             "python",
             "-I",
             "-c",
-            "import ssl, sqlite3, zlib, sys; assert sys.version_info[:2] == (3,12)",
+            f"import ssl, sqlite3, zlib, sys; assert '.'.join(map(str, sys.version_info[:2])) == {major_minor!r}",
         )
         script = Path(temporary) / "smoke.py"
         script.write_text(

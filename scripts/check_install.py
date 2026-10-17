@@ -14,7 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def main():
     version = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]["version"]
-    archive = ROOT / f"dist/pynox-{version}-cp312-linux-{platform.machine()}.tar.gz"
+    binary = Path(os.environ.get("PYNOX_BIN", ROOT / "target/release/pynox")).resolve()
+    built = json.loads(subprocess.check_output([binary, "doctor"]))
+    abi = built["python"]["abi"]
+    python_minor = built["python"]["major_minor"]
+    archive = ROOT / f"dist/pynox-{version}-{abi}-linux-{platform.machine()}.tar.gz"
     with tempfile.TemporaryDirectory(prefix="pynox-install-test-") as temporary:
         root = Path(temporary)
         env = {
@@ -23,14 +27,28 @@ def main():
             "PYNOX_BIN_DIR": str(root / "bin"),
             "PYNOX_VERSION": version,
         }
+        # Local archive selection must work without a Python selection or install.
+        env.pop("PYNOX_PYTHON_VERSION", None)
+        other_minor = "3.12" if python_minor == "3.11" else "3.11"
+        existing = root / f"runtime/versions/{version}-cp{other_minor.replace('.', '')}"
+        existing.mkdir(parents=True)
+        marker = existing / "preserve.txt"
+        marker.write_text("another installed variant")
         command = ["bash", str(ROOT / "scripts/install.sh"), "--archive", str(archive)]
         subprocess.run(command, env=env, check=True)
         binary = root / "bin/pynox"
         doctor = json.loads(subprocess.check_output([binary, "doctor"]))
         assert Path(doctor["python"]["home"]).is_relative_to(root)
+        assert doctor["python"]["abi"] == abi
+        assert doctor["python"]["version"] == built["python"]["version"]
+        assert marker.read_text() == "another installed variant"
         subprocess.run([binary, str(ROOT / "examples/hello.py")], check=True)
         repeat = subprocess.run(command, env=env, capture_output=True)
         assert repeat.returncode != 0 and b"already installed" in repeat.stderr
+        mismatch = subprocess.run(
+            command, env={**env, "PYNOX_PYTHON_VERSION": other_minor}, capture_output=True
+        )
+        assert mismatch.returncode == 2 and b"does not match" in mismatch.stderr
         bad = root / archive.name
         bad.write_bytes(b"corrupted release")
         bad.with_suffix(bad.suffix + ".sha256").write_text(
@@ -43,7 +61,7 @@ def main():
             capture_output=True,
         )
         assert result.returncode != 0 and b"Checksum mismatch" in result.stderr
-        assert not (root / f"rejected/versions/{version}").exists()
+        assert not (root / f"rejected/versions/{version}-{abi}").exists()
     print("Installed bundle runs; repeat installation and corrupt archives rejected")
 
 

@@ -17,6 +17,16 @@ def main():
     cargo = tomllib.loads((ROOT / "Cargo.toml").read_text())["package"]
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     version = cargo["version"]
+    pythons = (ROOT / ".python-versions").read_text().splitlines()
+    assert [".".join(p.split(".")[:2]) for p in pythons] == [
+        "3.11",
+        "3.12",
+        "3.13",
+        "3.14",
+        "3.15",
+    ], pythons
+    assert (ROOT / ".python-version").read_text().strip() == pythons[0]
+    assert project["requires-python"] == ">=3.11,<3.16"
     assert project["version"] == version
     assert f"PYNOX_VERSION:-{version}" in (ROOT / "scripts/install.sh").read_text()
     assert f"## {version}" in (ROOT / "CHANGELOG.md").read_text()

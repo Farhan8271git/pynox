@@ -4,6 +4,8 @@
 
 Accepted — 2026-10-17.
 
+The initial version pins and single-minor scope below are amended by ADR 009.
+
 ## Context
 
 End users should not need to install Python or compile Rust. Pynox must control

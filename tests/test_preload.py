@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sysconfig
 import tempfile
 import unittest
 from pathlib import Path
@@ -101,7 +102,7 @@ class PreloadedRuntimeTests(pool_tests.PoolRuntimeTests):
         )
 
 
-PACKAGES = runtime.ROOT / ".venv/lib/python3.12/site-packages"
+PACKAGES = Path(sysconfig.get_path("purelib"))
 
 
 @unittest.skipUnless(
