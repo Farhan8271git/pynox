@@ -1,15 +1,25 @@
 # Agents
 
-Give a model a Python tool. This guide covers the shape of the tool, who
-decides permissions, what the model gets back and how to register it with an
-agent framework.
+An agent answers a question by writing Python and running it. This guide
+shows where that code runs with Pynox, who decides what it may touch, what the
+model gets back, and how to plug it into a framework.
 
-## Key features
+## The problem in four lines
 
-- One function, `run_python(code) -> str`, that any framework can register
-- Permissions and limits fixed by the host, per call; the model only writes code
-- Results as text the model can act on: output, or error type, line and hint
-- About 5 ms per call from a warm pool; fresh process state every time
+```python
+def run_python(code: str) -> str:
+    return subprocess.run(["python", "-c", code], capture_output=True, text=True).stdout
+```
+
+This is how most agents run code today. It runs with your privileges. An
+ambiguous request becomes `rmtree` on the wrong directory; a "let me check
+the config" becomes a read of `~/.aws/credentials`; a `while True` hangs the
+agent. The alternative, a remote container, costs a second per call and a
+bill per hour.
+
+With Pynox the function keeps its shape and loses the risk: the code runs in
+a fresh process under a kernel policy you wrote, in about 5 ms, and the model
+reads back exactly what went wrong when it oversteps.
 
 ## The tool
 

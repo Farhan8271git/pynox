@@ -1,134 +1,73 @@
 # Pynox
 
-The Python runtime for agents. Run the code they write, fast and under control.
+A Python with the sandbox built in. Made for the code your agents write.
 
 !!! warning "Pre-alpha (0.1.0)"
-    Pynox is ready to try, experiment with and contribute to. Interfaces and
-    sandbox policies are still evolving; this is not a production release.
-    Linux only, x86_64 and ARM64.
+    Linux only, x86_64 and ARM64. Ready to try and to break; interfaces and
+    sandbox policies still change.
 
-## The problem
+## Start here
 
-Agents write Python: tool calls, data analysis, glue between APIs, tests for
-the code they just changed. Today that code runs in one of two places:
+Pynox is a Python. One binary carries a complete CPython, so `pynox app.py`
+runs the same file `python app.py` runs, with the same output and exit code.
+Around the interpreter, Pynox adds three things, in the order you will meet
+them:
 
-- **On your machine, with your privileges.** `subprocess.run(["python", ...])`,
-  `exec()`, a REPL tool. Zero latency, zero protection. One bad `rm -rf` or one
-  `open(".env")` away from trouble.
-- **In a remote container or microVM.** Strong isolation, 150 ms to 2 s to
-  start, a bill per hour, and your data leaves the machine.
+1. **A sandbox on every run.** The script reads its own directory and the
+   standard library. Everything else needs a grant: a flag for one run, a
+   `pynox.toml` for a project. When the script oversteps, you get Python's
+   traceback plus one line that says which grant would fix it.
+2. **A pool for agents.** Code written by a model runs in a fresh process
+   forked from a warm template, under the permissions you chose, in about
+   5 ms, and comes back as a result the model can act on.
+3. **Optimizations that need no flag.** Pynox speeds up specific operations
+   and publishes the measurements. Today: `json.dump`, 1.9× on a 3.9 MiB file.
 
-There was nothing in between: isolation enforced by the kernel, local, in
-milliseconds, with the whole Python ecosystem available.
+`--no-sandbox` is the plain interpreter whenever you need it.
 
-## The solution
+## Three ways to run
 
-Pynox is that layer. Send code, get back a result the model can act on:
-
-```python
-from agent_tool import PynoxPool
-
-pool = PynoxPool(workers=2)
-
-def run_python(code: str) -> str:
-    """Tool exposed to the model. The host fixes permissions; the model only writes code."""
-    return pool.run(code, allow_write=["out"], timeout="10s", memory="256m").describe()
+```bash
+pynox report.py                 # your script, sandboxed, output and exit code are Python's
+pynox --json report.py          # the same run as one JSON result, for automation
+pynox --no-sandbox -O report.py # CPython's own command line, unrestricted
 ```
 
-```text
->>> run_python("print(sum(range(10)))")
-45
->>> run_python("open('/etc/passwd').read()")
-PermissionError: [Errno 13] Permission denied: '/etc/passwd'
-at agent.py:1
-For files, grant the specific path with --allow-read/--allow-write. ...
-```
+For a model's code, the agent registers a tool that talks to `pynox pool`.
+The [agents guide](guides/agents.md) shows the whole thing in a dozen lines.
 
-Each call runs in a fresh process forked from a warm CPython template, under
-Landlock and seccomp, with the files, network, time and memory **you** chose.
-A small task answers in about 5 ms. At the terminal it is still Python:
-`pynox app.py` prints what the script prints and exits how it exits, only
-sandboxed by default. `pynox.toml` states a project's permissions once;
-`--no-sandbox` is the plain interpreter.
+## Why it exists
 
-## Why CPython, and why Rust
-
-Pynox keeps **CPython** as the engine. The model writes Python because it has
-seen more Python than any other language; the code it writes will run in
-production on CPython; and the ecosystem, from pandas to pydantic, only exists
-there. Pynox does not reimplement the language.
-
-**Rust** owns everything around the interpreter: the launcher, process
-supervision, the kernel sandbox, the pool and selected native paths. It is an
-implementation tool, not a performance claim. Pure Python loops run exactly as
-fast as in CPython.
-
-What Pynox does make faster is measured, operation by operation, against the
-same program on stock CPython:
-
-| Workload | CPython | `pynox` (sandboxed) | `pynox --no-sandbox` | `pynox pool` |
-| --- | ---: | ---: | ---: | ---: |
-| Tiny script | 7.45 ms | 10.06 ms | 7.67 ms | 4.47 ms |
-| JSON pipeline, 3.89 MiB | 153.63 ms | 81.52 ms | 78.46 ms | 74.48 ms |
-
-End-to-end p50 on this project's Linux ARM64 host with CPython 3.11; see
-[performance](performance.md) for method, limits and the full table.
-
-## Pynox and Monty
-
-[Monty](https://github.com/pydantic/monty), by Pydantic, runs a restricted
-Python subset for agent glue code with snapshots and no OS access. Pynox runs
-the real thing. They fit together: Monty orchestrates, Pynox executes the heavy
-work, and the host decides what that work may touch. See
-[Monty](guides/monty.md) for a complete, tested example.
-
-## Key features
-
-**Structured results** - `exit`, output, and an error with type, message, line
-and a hint the model can act on, instead of a raw traceback.
-
-**Kernel sandbox, no containers** - Landlock and seccomp per task. Which files,
-environment variables and network a job gets; time, memory and output limits.
-Fails closed; never silently runs unrestricted.
-
-**Warm pool** - A trusted CPython template forks a clean child per task.
-Preloaded libraries cost nothing per call; globals never leak between jobs.
-
-**Inline code** - Pool requests carry `code` directly. No temporary files, no
-file access granted by accident.
-
-**Transparent optimizations** - Native paths for common operations, always on,
-applied lazily when the program imports the module they optimize.
-
-**Secure by default, Python at the terminal** - `pynox script.py`, `-c` and
-`-m` run sandboxed with Python's own output and exit codes. `--no-sandbox`
-gives you every CPython option. One binary bundles its own CPython, 3.11
-through 3.15.
+An agent answers a question by writing Python and running it. Until now that
+code ran with your privileges, where one ambiguous instruction becomes
+`rmtree` on the wrong directory, or in a remote container that costs a second
+and a bill per call. Pynox puts kernel isolation between the model and your
+machine and keeps the whole Python ecosystem on the model's side of it.
 
 ## Guides
 
 ### Agents
 
-| Guide | Description |
+| Guide | What you learn |
 | --- | --- |
-| [Agents](guides/agents.md) | Give a model a Python tool: permissions, results, errors |
-| [Pool protocol](guides/pool.md) | JSONL requests and results, limits, preloading |
+| [Agents](guides/agents.md) | Turn the pool into a tool; permissions, results, errors, frameworks |
+| [Pool protocol](guides/pool.md) | Every request and result field; profiles and limits |
 | [Monty](guides/monty.md) | Monty orchestrates, Pynox executes |
 
 ### Runtime
 
-| Guide | Description |
+| Guide | What you learn |
 | --- | --- |
-| [Getting started](getting-started.md) | Build, run a script, run it sandboxed |
-| [Commands](usage.md) | `pynox`, `--json`, `--no-sandbox`, `pynox.toml`, `pynox pool`, `pynox doctor` |
+| [Getting started](getting-started.md) | Build, run, see the sandbox act, write `pynox.toml` |
+| [Commands](usage.md) | Flags, `--json`, `--no-sandbox`, configuration, `doctor` |
 | [Sandbox contract](sandbox.md) | What is granted, what is denied, what remains |
 | [Performance](performance.md) | Optimizations, startup budget, measurements |
 
 ### Project
 
-| Guide | Description |
+| Guide | What you learn |
 | --- | --- |
-| [Installation and versions](distribution.md) | Bundles, platforms, Python matrix |
-| [Deploy](deploy.md) | Docker, Kubernetes and Lambda: which kernels can sandbox, measured |
-| [Research provenance](research.md) | Where the earlier experiments live |
-| [Architecture decisions](adr/README.md) | The eleven records behind the design |
+| [Installation](distribution.md) | Bundles, platforms, Python versions |
+| [Deploy](deploy.md) | Docker, Kubernetes and Lambda, measured |
+| [Research](research.md) | Where the earlier experiments live |
+| [Architecture decisions](adr/README.md) | The twelve records behind the design |

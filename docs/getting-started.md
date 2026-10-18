@@ -1,19 +1,18 @@
 # Getting started
 
-This guide builds Pynox, runs a script three ways and sends the first request
-to a pool. By the end you have a working executor for agent code.
+Ten minutes: build Pynox, run a script, watch the sandbox act, write the
+permissions down, then send one request to the pool.
 
 ## Requirements
 
-- **Linux** on x86_64 or ARM64. glibc 2.28+ or musl 1.2+.
-- **Kernel 6.2 or newer** for the sandbox (Landlock ABI 3). The default Python
-  mode runs on any supported kernel.
-- **Rust** (see `rust-toolchain.toml`) and **uv >= 0.13.1** to build from a
-  checkout. `uv` downloads the matching CPython for you.
+- Linux on x86_64 or ARM64, glibc 2.28+ or musl 1.2+.
+- Kernel 6.2 or newer for the sandbox. `--no-sandbox` runs anywhere.
+- Rust (`rust-toolchain.toml`) and uv >= 0.13.1 to build. `uv` downloads the
+  matching CPython.
 
 !!! note "macOS"
-    Pynox is Linux only for now. On macOS, develop inside a Linux container or
-    VM. See [ADR 010](adr/010-linux-platforms.md).
+    Use a Linux container or VM. Pynox is Linux only for now
+    ([ADR 010](adr/010-linux-platforms.md)).
 
 ## Build
 
@@ -21,8 +20,7 @@ to a pool. By the end you have a working executor for agent code.
     ```bash
     git clone https://github.com/ferrumio/pynox.git
     cd pynox
-    make setup
-    make build
+    make setup && make build
     export PATH="$PWD/target/release:$PATH"
     ```
 
@@ -32,30 +30,28 @@ to a pool. By the end you have a working executor for agent code.
     bash scripts/install.sh --archive dist/pynox-0.1.0-cp311-linux-gnu-aarch64.tar.gz
     export PATH="$HOME/.local/bin:$PATH"
     ```
-    Bundles include Pynox and its CPython; the target machine needs neither
+    The bundle carries Pynox and its CPython; the target machine needs neither
     Python nor Rust. See [installation](distribution.md).
 
-Check the runtime and the kernel:
+Ask the runtime and the kernel what they support:
 
 ```bash
 pynox doctor
 ```
 
 ```json
-{"runtime": "pynox", "version": "0.1.0", "python": {"version": "3.11.17", "...": "..."},
- "platform": "linux-gnu-aarch64", "landlock_abi": 7,
- "runtime_supported": true, "sandbox_supported": true}
+{"version": "0.1.0", "python": {"version": "3.11.17"}, "platform": "linux-gnu-aarch64",
+ "landlock_abi": 7, "sandbox_supported": true, "sandbox_unavailable_reasons": []}
 ```
 
-`sandbox_supported` is false on kernels without Landlock ABI 3. There,
-sandboxed runs and the pool refuse to start and point you at `--no-sandbox`;
-they never fall back to unrestricted execution silently.
+When `sandbox_supported` is false, the reasons name the missing kernel
+interface. Sandboxed runs then refuse to start and point you at
+`--no-sandbox`; they never run unrestricted on their own.
 
 ## Run a script
 
-Create `hello.py`:
-
 ```python
+# hello.py
 name = "Pynox"
 print(f"Hello from {name}!")
 ```
@@ -65,9 +61,10 @@ pynox hello.py
 # Hello from Pynox!
 ```
 
-It ran inside the sandbox, with Python's output and exit code. The only thing
-it could read was its own directory and the standard library. Try to read
-outside it:
+Output and exit code are Python's. The script ran in the sandbox, and it could
+read its own directory and the standard library, nothing else.
+
+## Watch the sandbox act
 
 ```bash
 echo "print(open('/etc/hostname').read())" > probe.py
@@ -82,15 +79,23 @@ PermissionError: [Errno 13] Permission denied: '/etc/hostname'
 pynox: For files, grant the specific path with --allow-read/--allow-write. ...
 ```
 
-Grants are explicit and separate for reading and writing:
+Grant the path:
 
 ```bash
 pynox --allow-read=/etc/hostname probe.py
-pynox --allow-read=data --allow-write=out --timeout=5s job.py
-pynox -m pytest -q            # the current directory is readable for -m
 ```
 
-State a project's permissions once in `pynox.toml` next to where you run:
+Grants are separate for reading and writing. `-c` grants nothing; `-m` makes
+the current directory readable, as `sys.path[0]` would:
+
+```bash
+pynox --allow-read=data --allow-write=out --timeout=5s job.py
+pynox -m pytest -q
+```
+
+## Write the permissions down
+
+A project states its permissions once, in a `pynox.toml` where you run:
 
 ```toml
 [permissions]
@@ -98,12 +103,14 @@ allow_read = ["data"]
 allow_write = ["out"]
 ```
 
-Need the plain interpreter, the REPL or an option the sandbox does not map?
-
 ```bash
-pynox --no-sandbox -c 'import sys; print(sys.version)'
-pynox --no-sandbox -O app.py
+pynox job.py
 ```
+
+Pynox reads `--config PATH`, then `$PYNOX_CONFIG`, then `./pynox.toml`. It
+never reads a file beside the script, so a program cannot grant itself more.
+Profiles, pool settings and limits live in the same file; see
+[commands](usage.md#pynoxtoml).
 
 ## Get a JSON result
 
@@ -116,21 +123,17 @@ pynox --json hello.py
  "policy": {"allow_read": [], "implicit_read": ["/home/you"], "network": "deny", "...": "..."}}
 ```
 
-Failures carry a structured `error` with type, message, file, line and hint.
-See [commands](usage.md) for every flag and the [sandbox contract](sandbox.md)
-for what is and is not enforced.
+Failures carry an `error` with type, message, file, line and hint. This is
+the shape the pool returns for every task.
 
-## Start a pool
+## Send one request to the pool
 
-The pool is how agents use Pynox: a warm CPython template that forks a fresh,
-sandboxed child per request.
+The pool keeps a CPython template warm and forks a fresh, sandboxed child per
+request. Agents talk to it; so can you, with a line of JSON:
 
 ```bash
 pynox pool --workers=2
 ```
-
-The first line out is a `ready` event. Then send one JSON request per line.
-Inline `code` needs no file:
 
 ```json
 {"id": 1, "code": "print(sum(range(10)))"}
@@ -140,7 +143,7 @@ Inline `code` needs no file:
 {"id": 1, "exit": 0, "stdout": "45\n", "stderr": "", "error": null, "duration_ms": 4, "...": "..."}
 ```
 
-From Python, use the client in `examples/agent_tool.py`:
+From Python, `examples/agent_tool.py` wraps the protocol:
 
 ```python
 from agent_tool import PynoxPool
@@ -153,8 +156,18 @@ with PynoxPool(workers=2) as pool:
 PYNOX_BIN=$PWD/target/release/pynox uv run python examples/agent_tool.py
 ```
 
-## Next steps
+## Plain Python
 
-- [Agents](guides/agents.md): turn `pool.run` into a tool your model can call.
-- [Pool protocol](guides/pool.md): every request and result field.
-- [Monty](guides/monty.md): combine Monty's glue-code sandbox with Pynox.
+```bash
+pynox --no-sandbox -c 'import sys; print(sys.version)'
+pynox --no-sandbox -O app.py
+```
+
+The unrestricted CPython command line, REPL included, with Pynox's
+optimizations installed.
+
+## Next
+
+- [Agents](guides/agents.md): make `pool.run` a tool your model can call.
+- [Pool protocol](guides/pool.md): every field, profiles and limits.
+- [Monty](guides/monty.md): Monty's glue-code sandbox plus Pynox.

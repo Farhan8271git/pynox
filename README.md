@@ -7,107 +7,72 @@
 ![Linux x86_64 and ARM64](https://img.shields.io/badge/platform-Linux%20x86__64%20%7C%20ARM64-lightgrey)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-**The Python runtime for agents. Run the code they write, fast and under control.**
+**A Python with the sandbox built in. Made for the code your agents write.**
 
-Pynox runs ordinary Python on **CPython**, sandboxed by default: each run gets
+Pynox is a Python. One Linux binary carries a complete CPython, so
+`pynox app.py` runs the same file that `python app.py` runs, with the same
+output and exit code. What changes is around the interpreter: every run gets
 only the files, network, time and memory you grant, enforced by the kernel.
-A warm worker pool answers agent tool calls in milliseconds with structured
-results a model can act on, and native optimizations apply transparently where
-they measurably help. At the terminal it still feels like `python`.
-No framework, no `import pynox`.
+A warm pool runs code in a few milliseconds and reports back in a form a
+model can act on.
 
-> 🚧 **Pre-alpha (0.1.0).** Ready to try, experiment and contribute.
-> Interfaces and sandbox policies are still evolving; this is not a production release.
+> 🚧 **Pre-alpha (0.1.0).** Linux only. Ready to try and to break; interfaces
+> and sandbox policies still change.
 
-| Platform | Architectures | Modes |
-| --- | --- | --- |
-| Linux glibc 2.28+ | x86_64, ARM64 | `pynox` (sandboxed), `--no-sandbox`, `pynox pool` |
-| Linux musl 1.2+ / Alpine | x86_64, ARM64 | `pynox` (sandboxed), `--no-sandbox`, `pynox pool` |
+## Run a script
 
-Pynox is **Linux only** for now; the sandbox is built on Landlock and seccomp.
-On macOS, use a Linux container or VM. See [platforms](docs/distribution.md).
-
-## Why Pynox?
-
-- **Built for agent loops** — Send code, get back `exit`, output, a structured error with type, line and a hint, in a few milliseconds. The host chooses each task's permissions; the model only writes Python.
-- **Secure by default, no containers** — Landlock and seccomp on every run: which files, environment variables and network a program gets, plus time, memory and output limits. Grants come from flags or a `pynox.toml`. Fails closed; `--no-sandbox` is the explicit way out.
-- **Warm pool** — A trusted CPython template forks a clean child per task. Small tasks answer faster than a new `python` process starts; preloaded libraries cost nothing per call.
-- **Real Python** — The whole ecosystem, every CPython option, unchanged code. Pairs with [Monty](https://github.com/pydantic/monty) for glue code that needs snapshots.
-- **Faster where it counts** — Native paths for common operations, always on, each measured against stock CPython and falling back to CPython's behavior when a call is not eligible.
-
-## Quick start
-
-For now, build from a checkout. You'll need **Linux on x86_64 or ARM64**, Rust
-and **uv >= 0.13.1**. `uv` downloads the matching Python for you.
+Build once (Linux, Rust and uv >= 0.13.1; `uv` fetches the matching Python):
 
 ```bash
-make setup
-make build
-
-# Make the local build available in this shell.
+make setup && make build
 export PATH="$PWD/target/release:$PATH"
-pynox doctor
 ```
 
-Create `hello.py`:
+Write `hello.py`:
 
 ```python
 name = "Pynox"
 print(f"Hello from {name}!")
 ```
 
-Run it:
-
 ```bash
 pynox hello.py
 # Hello from Pynox!
 ```
 
-That ran in the sandbox. Output, exit code and arguments are Python's; the
-script could read its own directory and the standard library, nothing else.
-Ask for more and you get Python's traceback plus a hint:
+That is all a script needs. It ran inside the sandbox, and it could read its
+own directory and the standard library, nothing else.
+
+## See the sandbox work
 
 ```bash
 echo "print(open('/etc/hostname').read())" > probe.py
 pynox probe.py
-# Traceback (most recent call last): ...
-# PermissionError: [Errno 13] Permission denied: '/etc/hostname'
-# pynox: For files, grant the specific path with --allow-read/--allow-write. ...
+```
+
+```text
+Traceback (most recent call last):
+  File "/home/you/probe.py", line 1, in <module>
+    print(open('/etc/hostname').read())
+PermissionError: [Errno 13] Permission denied: '/etc/hostname'
+pynox: For files, grant the specific path with --allow-read/--allow-write. ...
+```
+
+Python's traceback, plus one line from Pynox telling you what to do. Grant the
+path and run again:
+
+```bash
 pynox --allow-read=/etc/hostname probe.py
 ```
 
-`-c`, `-m` and a project-wide `pynox.toml` work the same way; `--no-sandbox`
-gives you CPython's unrestricted command line, REPL and options included:
+Reads and writes are separate grants. Network is off until you ask.
+Subprocesses never run. `-c` and `-m` work the same way: `pynox -m pytest -q`
+runs your tests with the current directory readable and nothing writable.
 
-```bash
-pynox -m pytest -q
-pynox --json --allow-write=out job.py     # one structured result for automation
-pynox --no-sandbox -O app.py
-```
+## Say it once
 
-## What about speed?
-
-Pynox optimizes specific operations, transparently, and reports the results
-honestly. Today it ships one optimization: eligible `json.dump` calls use
-CPython's C encoder with one batched write. It activates only when your program
-imports `json`, so other programs pay nothing.
-
-Measured on this project's Linux ARM64 host with CPython 3.11, end-to-end p50:
-
-| Workload | CPython | `pynox` (sandboxed) | `pynox --no-sandbox` | `pynox pool` |
-| --- | ---: | ---: | ---: | ---: |
-| Tiny script | 7.45 ms | 10.06 ms | 7.67 ms | 4.47 ms |
-| JSON pipeline, 3.89 MiB | 153.63 ms | 81.52 ms | 78.46 ms | 74.48 ms |
-
-The sandbox costs about 2.5 ms per run for the supervised worker and kernel
-policy. Python loops are still CPython loops; Pynox does not make the
-interpreter itself faster. The optimized path uses extra memory for large
-outputs. See [measurements, limits and the startup budget](docs/performance.md).
-
-## Grant permissions once with `pynox.toml`
-
-Flags work for one run. A project states its permissions in a `pynox.toml`
-in the directory you run from, or in a file passed with `--config`:
+Flags are for one run. A project puts its permissions in `pynox.toml`, in the
+directory you run from:
 
 ```toml
 [permissions]
@@ -121,26 +86,26 @@ allow_env = ["API_KEY"]
 ```
 
 ```bash
-pynox job.py                      # data readable, out writable
-pynox --profile=fetch sync.py     # plus network and the API key
+pynox job.py                    # data readable, out writable
+pynox --profile=fetch sync.py   # plus network and the API key
 ```
 
-The file beside the script is never consulted, only the one where you run or
-the one you name, so a program cannot widen its own permissions. Reads and
-writes are separate grants; network is off by default and never enables
-subprocesses. The sandbox needs **Landlock ABI 3** (Linux 6.2+) and refuses to
-run without it. See the [command reference](docs/usage.md) and the
-[sandbox guide](docs/sandbox.md).
+Pynox never reads a `pynox.toml` beside the script, only the one where you
+run or the one you pass with `--config`. A program cannot widen its own
+permissions.
 
-## Give an agent a Python tool
+## Why this exists: agents write code
 
-Use Pynox as the execution tool in your agent loop. Your application chooses
-each task's permissions; the model only supplies code and receives a result it
-can inspect to decide its next step. No framework-specific SDK is required.
+An agent answers a question by writing Python and running it. Today that
+code runs in one of two places. On your machine with your privileges, where
+one ambiguous instruction becomes `rmtree` on the wrong directory or a read of
+`~/.aws/credentials`. Or in a remote container, which takes a second to start,
+costs money per hour and ships your data out.
 
-A tool is a function the model can call. [`examples/agent_tool.py`](examples/agent_tool.py)
-gives you the pool client; the host fixes the permissions, the model only
-writes code, and the result comes back as text the model can read:
+Pynox is the third place. The model's code runs locally, under the policy you
+wrote, in about 5 ms. When it oversteps, the model gets the error text and
+corrects itself on the next turn. [`examples/agent_tool.py`](examples/agent_tool.py)
+turns the pool into a function you register as a tool in any framework:
 
 ```python
 from agent_tool import PynoxPool
@@ -149,8 +114,7 @@ pool = PynoxPool(workers=2)
 
 def run_python(code: str) -> str:
     """Run Python written by the model. It can write to ./out and nothing else."""
-    result = pool.run(code, allow_write=["out"], timeout="10s", memory="256m")
-    return result.describe()
+    return pool.run(code, allow_write=["out"], timeout="10s").describe()
 ```
 
 ```python
@@ -162,28 +126,57 @@ at agent.py:1
 For files, grant the specific path with --allow-read/--allow-write. ...
 ```
 
-Register `run_python` with your framework's tool decorator and you are done.
-Under the hood this is `pynox pool --workers=2` speaking JSONL: one request per
-line with `code`, a `profile` or permissions and limits, capped by the
-operator's `[pool.limits]`; one result per line with `id`, `exit`, `stdout`,
-`error` and timing. Each job runs in a fresh child forked
-from a warm template, so a small task answers in about 5 ms. Python globals
-are not shared between jobs; authorized file writes persist. See the
-[agents guide](docs/guides/agents.md) and the [pool protocol](docs/guides/pool.md).
+Each call forks a fresh process from a warm CPython template, so preloaded
+libraries cost nothing per call and nothing leaks between calls. The protocol
+underneath is JSON Lines over `pynox pool`, usable from any language. The
+next release packages this as `pip install pynox` with a one-line
+`pynox.tool()`; until then, copy the example file.
 
-### With Monty
+Read the [agents guide](docs/guides/agents.md) for permissions, results and
+framework registration, the [pool protocol](docs/guides/pool.md) for every
+field, and [Monty](docs/guides/monty.md) to pair Pynox with Pydantic's
+glue-code sandbox.
 
-[Monty](https://github.com/pydantic/monty) runs a restricted Python subset for
-agent glue code, with snapshots and no filesystem or network. When that code
-needs real libraries, hand the work to Pynox through an external function.
-[`examples/monty_bridge.py`](examples/monty_bridge.py) is a complete, tested
-example: Monty orchestrates, Pynox executes, and the host decides what the
-heavy code may touch.
+## Plain Python when you need it
 
-## Python versions
+```bash
+pynox --no-sandbox -O app.py
+pynox --no-sandbox -m venv .venv
+pynox --no-sandbox              # the REPL
+```
 
-Pynox builds with **CPython 3.11–3.15**, using **3.11 by default**.
-Choose another version when building:
+`--no-sandbox` hands the command line to CPython unchanged. Use it for
+interpreter options the sandbox does not map, and on kernels that cannot
+sandbox, such as AWS Lambda today. `pynox doctor` tells you which case you are
+in and why.
+
+## Speed, measured
+
+Pynox makes specific operations faster and says so with numbers. Today it
+ships one such path: eligible `json.dump` calls use CPython's C encoder with a
+single write, installed only when a program imports `json`. End-to-end p50 on
+this project's Linux ARM64 host, CPython 3.11:
+
+| Workload | CPython | `pynox` (sandboxed) | `pynox --no-sandbox` | `pynox pool` |
+| --- | ---: | ---: | ---: | ---: |
+| Tiny script | 7.45 ms | 10.06 ms | 7.67 ms | 4.47 ms |
+| JSON pipeline, 3.89 MiB | 153.63 ms | 81.52 ms | 78.46 ms | 74.48 ms |
+
+The sandbox costs about 2.5 ms per run. Python loops run at CPython speed;
+Pynox does not change the interpreter. See [performance](docs/performance.md).
+
+## Platforms and Python versions
+
+| Platform | Architectures |
+| --- | --- |
+| Linux glibc 2.28+ | x86_64, ARM64 |
+| Linux musl 1.2+ / Alpine | x86_64, ARM64 |
+
+The sandbox needs Linux 6.2 or newer (Landlock ABI 3). Containers inherit the
+host kernel; AWS Lambda cannot sandbox today. [Deploy](docs/deploy.md) has the
+measured details. On macOS, use a Linux container or VM.
+
+Each binary embeds one CPython, 3.11 by default:
 
 ```bash
 make build PYNOX_PYTHON_VERSION=3.14
@@ -191,56 +184,26 @@ pynox --version
 # pynox 0.1.0 (CPython 3.14.8)
 ```
 
-`--version` always shows both Pynox and its Python runtime. Each binary uses
-one Python version, with the GIL. Exact pins live in [.python-versions](.python-versions);
-see [distribution](docs/distribution.md) for custom builds and version management.
-
-## Install a bundle
-
-Bundles include Pynox and its matching Python, so the target machine needs
-neither Python nor Rust installed. Build and install a local bundle:
-
-```bash
-make bundle
-# Use the archive path printed by the build. Example for Linux glibc on ARM64:
-bash scripts/install.sh --archive dist/pynox-0.1.0-cp311-linux-gnu-aarch64.tar.gz
-~/.local/bin/pynox --version
-```
-
-The installer checks the checksum, matches the OS, libc and architecture,
-selects Python from the archive and preserves other installed variants.
-Add `~/.local/bin` to your `PATH` to
-use the installed `pynox`. GitHub downloads require published release assets;
-see [installation options](docs/distribution.md).
-
-## Contributing
-
-Try your scripts, report unexpected behavior and help us measure real workloads.
-The [contributor guide](CONTRIBUTING.md) covers setup, checks and releases.
-
-Rust source lives in [`src/`](src/), and embedded Python helpers live in
-[`python/pynox/`](python/pynox/), following pydynox's layout.
-
-```bash
-make test-rust  # Rust unit tests in tests/rust/
-make test      # Rust + Python integration tests
-```
-
-See the [test guide](tests/README.md) for coverage and Python version selection.
+`make bundle` produces a self-contained archive with Pynox and its Python;
+`bash scripts/install.sh --archive dist/pynox-*.tar.gz` installs it. See
+[installation](docs/distribution.md).
 
 ## Documentation
 
-Full documentation lives at **[ferrumio.github.io/pynox](https://ferrumio.github.io/pynox/)**.
+Full documentation: **[ferrumio.github.io/pynox](https://ferrumio.github.io/pynox/)**.
 
 - [Getting started](docs/getting-started.md)
-- [Agents: tools, pool protocol and Monty](docs/guides/agents.md)
-- [Commands](docs/usage.md)
-- [Sandbox and permissions](docs/sandbox.md)
-- [Installation and Python versions](docs/distribution.md)
-- [Deploy: Docker, Kubernetes, Lambda](docs/deploy.md)
-- [Performance and compatibility](docs/performance.md)
-- [Architecture decisions](ADR/README.md)
-- [Security scope](SECURITY.md)
+- [Agents](docs/guides/agents.md), [pool protocol](docs/guides/pool.md), [Monty](docs/guides/monty.md)
+- [Commands](docs/usage.md) and the [sandbox contract](docs/sandbox.md)
+- [Deploy](docs/deploy.md), [installation](docs/distribution.md), [performance](docs/performance.md)
+- [Architecture decisions](ADR/README.md) and [security scope](SECURITY.md)
+
+## Contributing
+
+Try your scripts, report what surprises you, and bring real workloads to
+measure. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup and checks;
+`make test` runs the Rust and Python suites. Rust lives in `src/`, embedded
+Python in `python/pynox/`.
 
 ## License
 
