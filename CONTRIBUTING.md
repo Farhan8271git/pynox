@@ -60,6 +60,9 @@ processes. Do not replace permission checks with mocks or silently skip unsuppor
 Optimization tests need a stock CPython reference, values/errors/side effects,
 memory and complete-workload timing. Run comparable lifecycles.
 
+How changes are reviewed and merged, and the branch and tag rules, are in
+[GOVERNANCE.md](GOVERNANCE.md).
+
 Use conventional commit prefixes (`feat`, `fix`, `perf`, `docs`, `ci`, `chore`).
 Add an ADR when changing an architectural contract. ADRs follow the numbered
 format used in pydynox. Keep user-facing policy documentation in sync.

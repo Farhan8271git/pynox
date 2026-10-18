@@ -80,7 +80,14 @@ def main():
         (bundle / "bin").mkdir(parents=True)
         shutil.copy2(binary, bundle / "bin/pynox")
         shutil.copytree(home, bundle / "python", symlinks=True)
-        for filename in ("LICENSE", "README.md", "CONTRIBUTING.md", "SECURITY.md", "CHANGELOG.md"):
+        for filename in (
+            "LICENSE",
+            "README.md",
+            "CONTRIBUTING.md",
+            "GOVERNANCE.md",
+            "SECURITY.md",
+            "CHANGELOG.md",
+        ):
             shutil.copy2(ROOT / filename, bundle / filename)
         shutil.copytree(ROOT / "ADR", bundle / "ADR")
         shutil.copytree(ROOT / "docs", bundle / "docs", ignore=shutil.ignore_patterns("adr"))

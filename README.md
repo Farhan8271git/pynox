@@ -3,6 +3,7 @@
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
 [![CI](https://github.com/ferrumio/pynox/actions/workflows/ci.yml/badge.svg)](https://github.com/ferrumio/pynox/actions/workflows/ci.yml)
 [![Documentation](https://img.shields.io/badge/docs-ferrumio.github.io%2Fpynox-indigo)](https://ferrumio.github.io/pynox/)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ferrumio/pynox/badge)](https://scorecard.dev/viewer/?uri=github.com/ferrumio/pynox)
 [![CPython 3.11–3.15](https://img.shields.io/badge/CPython-3.11%E2%80%933.15-blue)](#python-versions)
 ![Linux x86_64 and ARM64](https://img.shields.io/badge/platform-Linux%20x86__64%20%7C%20ARM64-lightgrey)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)

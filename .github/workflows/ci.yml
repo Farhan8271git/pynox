@@ -65,3 +65,16 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # One stable check for branch rules: it passes only when every job above
+  # passed, so the matrix can change without editing the ruleset.
+  ci-ok:
+    if: always()
+    needs: [quality, linux]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: All CI jobs passed
+        run: |
+          [[ "${{ needs.quality.result }}" == success && "${{ needs.linux.result }}" == success ]] || {
+            echo "quality=${{ needs.quality.result }} linux=${{ needs.linux.result }}"
+            exit 1
+          }

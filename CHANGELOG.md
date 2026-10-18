@@ -27,6 +27,9 @@
   plain socket, measured at about 200 ms init; and multi-architecture
   container images per CPython minor and libc, built from the bundles with
   no build step and pushed to GHCR by the release workflow.
+- Govern the repository: rulesets for `main` (pull requests, a single
+  `ci-ok` check, no force pushes) and for `v*` tags, `CODEOWNERS`, CodeQL,
+  the OpenSSF Scorecard, and a `GOVERNANCE.md`.
 - Add four agent use cases (data analyst, support, coding, API) as runnable
   examples tested on every commit, with a use cases page built from their
   real output.
