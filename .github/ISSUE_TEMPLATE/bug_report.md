@@ -21,8 +21,7 @@ labels: bug
 - What did you expect to happen?
 - What happened instead?
 
-Include the output of `pynox doctor` and any relevant  error output.
-
+Include the output of `pynox doctor` and any relevant error output.
 
 Remove credentials, secrets, and sensitive paths before posting. For security
 vulnerabilities, follow [SECURITY.md](../../SECURITY.md) and use private

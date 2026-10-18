@@ -55,7 +55,6 @@ with Monty from the `integration` group). CI runs every Python/platform
 combination: glibc and musl Linux on x86_64 and ARM64.
 See [the test guide](tests/README.md) for the coverage split.
 
-## Code of conduct
 ## Code of Conduct
 
 All contributors are expected to follow the
