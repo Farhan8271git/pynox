@@ -167,6 +167,7 @@ class Pool:
         timeout: str | None = None,
         memory: str | None = None,
         max_output: int | None = None,
+        max_file_size: str | None = None,
     ) -> Result:
         """Run ``code`` in a fresh sandboxed process and wait for its result.
 
@@ -188,7 +189,12 @@ class Pool:
             request["allow_network"] = allow_network
         if env:
             request["env"] = dict(env)
-        for key, value in (("timeout", timeout), ("memory", memory), ("max_output", max_output)):
+        for key, value in (
+            ("timeout", timeout),
+            ("memory", memory),
+            ("max_output", max_output),
+            ("max_file_size", max_file_size),
+        ):
             if value is not None:
                 request[key] = value
         return self.request(request)
@@ -329,7 +335,7 @@ def _grant_fields(grants: Mapping[str, Any]) -> dict[str, Any]:
         paths = [str(Path(p)) for p in grants.get(key, ())]
         if paths:
             fields[key] = paths
-    for key in ("profile", "allow_network", "timeout", "memory", "max_output"):
+    for key in ("profile", "allow_network", "timeout", "memory", "max_output", "max_file_size"):
         if grants.get(key) is not None:
             fields[key] = grants[key]
     if grants.get("env"):

@@ -403,3 +403,55 @@ class PoolTests(unittest.TestCase):
             connection, _ = listener.accept()
             with connection:
                 self.assertEqual(connection.recv(32), b"pynox")
+
+
+class FileSizeLimitTests(unittest.TestCase):
+    def test_writes_beyond_the_limit_fail_with_an_exception(self):
+        with tempfile.TemporaryDirectory(prefix="pynox-fsize-") as temporary:
+            root = Path(temporary)
+            code = (
+                "import errno\n"
+                f"f = open({str(root / 'big.bin')!r}, 'wb', buffering=0)\n"
+                "try:\n"
+                "    for _ in range(10):\n"
+                "        f.write(b'x' * 60000)\n"
+                "except OSError as e:\n"
+                "    print('stopped', errno.errorcode[e.errno])\n"
+            )
+            result = run(f"--allow-write={root}", "--max-file-size=64k", "-c", code)
+            self.assertEqual(
+                (result.returncode, result.stdout), (0, "stopped EFBIG\n"), result.stderr
+            )
+            self.assertLessEqual((root / "big.bin").stat().st_size, 64 * 1024)
+            report = json.loads(run("--json", "--max-file-size=64k", "-c", "pass").stdout)
+            self.assertEqual(report["policy"]["max_file_size_bytes"], 64 * 1024)
+            unlimited = run(
+                f"--allow-write={root}",
+                "-c",
+                f"open({str(root / 'free.bin')!r}, 'wb').write(b'x' * 200000)",
+            )
+            self.assertEqual(unlimited.returncode, 0, unlimited.stderr)
+
+    def test_pool_limit_applies_to_requests_that_do_not_set_one(self):
+        with tempfile.TemporaryDirectory(prefix="pynox-fsize-") as temporary:
+            root = Path(temporary)
+            (root / "out").mkdir()
+            config = root / "pynox.toml"
+            config.write_text(
+                '[pool]\nworkers = 1\n[pool.limits]\nallow_write = ["out"]\nmax_file_size = "64k"\n'
+            )
+            target = root / "out" / "f.bin"
+            write = f"open({str(target)!r}, 'wb').write(b'x' * 100000)"
+            requests = [
+                {"id": "default", "code": write, "allow_write": [str(root / "out")]},
+                {"id": "over", "code": "pass", "max_file_size": "1m"},
+                {"id": "under", "code": "pass", "max_file_size": "8k"},
+            ]
+            result = run(
+                "pool", f"--config={config}", stdin="".join(json.dumps(r) + "\n" for r in requests)
+            )
+            reports = {r["id"]: r for r in map(json.loads, result.stdout.splitlines()[1:])}
+            self.assertEqual(reports["default"]["error"]["type"], "OSError", reports["default"])
+            self.assertEqual(reports["default"]["policy"]["max_file_size_bytes"], 64 * 1024)
+            self.assertEqual(reports["over"]["error"]["type"], "RequestError")
+            self.assertEqual(reports["under"]["policy"]["max_file_size_bytes"], 8 * 1024)

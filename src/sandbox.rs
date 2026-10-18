@@ -24,6 +24,10 @@ fn limits(policy: &Policy) -> Result<()> {
         (libc::RLIMIT_CPU, policy.timeout_ms.div_ceil(1000) + 1),
         (libc::RLIMIT_NOFILE, 128),
         (libc::RLIMIT_CORE, 0),
+        (
+            libc::RLIMIT_FSIZE,
+            policy.max_file_size.unwrap_or(libc::RLIM_INFINITY),
+        ),
     ] {
         let limit = libc::rlimit {
             rlim_cur: maximum,
@@ -34,6 +38,11 @@ fn limits(policy: &Policy) -> Result<()> {
         }
     }
     if unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    // Exceeding RLIMIT_FSIZE raises SIGXFSZ, which kills by default. Ignore it
+    // so the write fails with EFBIG and Python reports an OSError instead.
+    if unsafe { libc::signal(libc::SIGXFSZ, libc::SIG_IGN) } == libc::SIG_ERR {
         return Err(std::io::Error::last_os_error().into());
     }
     Ok(())

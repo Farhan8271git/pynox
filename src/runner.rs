@@ -285,6 +285,7 @@ pub fn finish(
         "network": if policy.allow_network { "ipv4+ipv6" } else { "deny" },
         "subprocesses": "deny", "host_unix_sockets": "deny",
         "timeout_ms": policy.timeout_ms, "memory_bytes": policy.memory_bytes,
+        "max_file_size_bytes": policy.max_file_size,
         "backend": "landlock+seccomp"
     });
     result

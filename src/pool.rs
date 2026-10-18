@@ -97,6 +97,8 @@ struct Request {
     memory: Option<String>,
     #[serde(default)]
     max_output: Option<u64>,
+    #[serde(default)]
+    max_file_size: Option<String>,
 }
 
 impl Request {
@@ -109,6 +111,7 @@ impl Request {
             || self.profile.is_some()
             || self.allow_network.is_some()
             || self.memory.is_some()
+            || self.max_file_size.is_some()
             || !self.allow_read.is_empty()
             || !self.allow_write.is_empty()
             || !self.package_dirs.is_empty()
@@ -164,11 +167,12 @@ impl Request {
             timeout: self.timeout,
             memory: self.memory,
             max_output: self.max_output,
+            max_file_size: self.max_file_size,
         });
         // Requests are capped by [pool.limits]; the operator sets the ceiling.
-        let policy = Policy::new(&grants, program, true)?;
+        let mut policy = Policy::new(&grants, program, true)?;
         if let Some(config) = config {
-            config.check_limits(&policy)?;
+            config.check_limits(&mut policy)?;
         }
         if self.env.values().any(|value| value.contains('\0')) {
             bail!("Environment values cannot contain NUL");

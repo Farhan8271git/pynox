@@ -111,7 +111,7 @@ max_output = 4096
         ..Grants::default()
     };
     config
-        .check_limits(&Policy::new(&within, code(), true).unwrap())
+        .check_limits(&mut Policy::new(&within, code(), true).unwrap())
         .unwrap();
     for exceeding in [
         Grants {
@@ -143,8 +143,8 @@ max_output = 4096
             ..Grants::default()
         },
     ] {
-        let policy = Policy::new(&exceeding, code(), true).unwrap();
-        assert!(config.check_limits(&policy).is_err(), "{exceeding:?}");
+        let mut policy = Policy::new(&exceeding, code(), true).unwrap();
+        assert!(config.check_limits(&mut policy).is_err(), "{exceeding:?}");
     }
     let unlimited = parse("").unwrap();
     let wide = Grants {
@@ -152,7 +152,35 @@ max_output = 4096
         ..Grants::default()
     };
     unlimited
-        .check_limits(&Policy::new(&wide, code(), true).unwrap())
+        .check_limits(&mut Policy::new(&wide, code(), true).unwrap())
         .unwrap();
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn file_size_limit_caps_requests_and_becomes_their_default() {
+    let config = parse("[pool.limits]\nmax_file_size = \"10m\"\n").unwrap();
+    let code = || Program::Code {
+        source: "pass".into(),
+        label: "<code>".into(),
+        argv0: "<code>".into(),
+        args: Vec::new(),
+    };
+    let mut unset = Policy::new(&Grants::default(), code(), true).unwrap();
+    config.check_limits(&mut unset).unwrap();
+    assert_eq!(unset.max_file_size, Some(10 * 1024 * 1024));
+    let smaller = Grants {
+        max_file_size: Some("1m".into()),
+        ..Grants::default()
+    };
+    let mut policy = Policy::new(&smaller, code(), true).unwrap();
+    config.check_limits(&mut policy).unwrap();
+    assert_eq!(policy.max_file_size, Some(1024 * 1024));
+    let larger = Grants {
+        max_file_size: Some("11m".into()),
+        ..Grants::default()
+    };
+    let mut policy = Policy::new(&larger, code(), true).unwrap();
+    assert!(config.check_limits(&mut policy).is_err());
+    assert!(parse("[pool.limits]\nmax_file_size = \"lots\"\n").is_err());
 }

@@ -114,6 +114,7 @@ reduce allocations or raise `memory`.
 | Network | denied | `allow_network=True` (IPv4/IPv6, any host) |
 | Subprocesses, host Unix sockets | denied | not grantable |
 | Wall time, address space, output | 10 s, 512 MiB, 64 KiB | `timeout`, `memory`, `max_output` |
+| Size of any written file | unlimited | `max_file_size`, or a `[pool.limits]` ceiling |
 
 Enforcement is in the kernel (Landlock and seccomp) and covers native code,
 ctypes included. Read the [sandbox contract](../sandbox.md) before relying on

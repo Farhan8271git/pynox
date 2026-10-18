@@ -97,6 +97,11 @@ boundary. Metadata visibility, persistent writes and the absence of domain
 allowlists remain disclosed limits. Full hostile-code containment is not
 claimed.
 
+Per-file size is bounded with `RLIMIT_FSIZE` when `max_file_size` is set,
+and the worker ignores `SIGXFSZ` so the write fails with `EFBIG` instead of
+killing the task. Total disk use across files, physical memory (RSS) and CPU
+share are not bounded; they need cgroups, a separate operational decision.
+
 Kernel upgrades no longer implicitly grant new syscalls. A new CPython, libc
 or native package may need an explicit policy addition; denied native calls
 return an errno so Python can report an exception when it handles that error.

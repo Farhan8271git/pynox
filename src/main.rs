@@ -42,6 +42,7 @@ directory for -m):
   --allow-network        IPv4/IPv6; subprocesses and host Unix sockets stay denied
   --timeout=5s           Wall-clock limit        --memory=512m   Address-space limit
   --max-output=65536     Captured bytes per stream, with --json
+  --max-file-size=SIZE   Largest size a written file may reach, e.g. 100m
 
 Configuration:
   --config=PATH          pynox.toml with permissions, profiles and pool settings

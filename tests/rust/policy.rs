@@ -303,3 +303,21 @@ fn overlay_concatenates_lists_and_overrides_scalars() {
     assert_eq!(merged.timeout.as_deref(), Some("1s"));
     assert_eq!(merged.memory.as_deref(), Some("1g"));
 }
+
+#[test]
+fn file_sizes_parse_with_units_and_reach_the_policy() {
+    assert_eq!(parse_size("1k").unwrap(), 1024);
+    assert_eq!(parse_size("100M").unwrap(), 100 * 1024 * 1024);
+    for bad in ["", "10", "0k", "1.5g", "10mb"] {
+        assert!(parse_size(bad).is_err(), "{bad}");
+    }
+    let invocation = parse_invocation(&args(&["--max-file-size=2m", "app.py"])).unwrap();
+    assert_eq!(invocation.grants.max_file_size.as_deref(), Some("2m"));
+    assert!(parse_invocation(&args(&["--max-file-size=huge", "app.py"])).is_err());
+    let program = Program::Script {
+        path: hello(),
+        args: Vec::new(),
+    };
+    let policy = Policy::new(&invocation.grants, program, false).unwrap();
+    assert_eq!(policy.max_file_size, Some(2 * 1024 * 1024));
+}

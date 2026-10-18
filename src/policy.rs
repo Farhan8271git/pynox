@@ -38,6 +38,9 @@ pub struct Grants {
     pub memory: Option<String>,
     #[serde(default)]
     pub max_output: Option<u64>,
+    /// Largest size any single file may reach through a write, e.g. `100m`.
+    #[serde(default)]
+    pub max_file_size: Option<String>,
 }
 
 impl Grants {
@@ -51,6 +54,7 @@ impl Grants {
         self.timeout = layer.timeout.clone().or(self.timeout);
         self.memory = layer.memory.clone().or(self.memory);
         self.max_output = layer.max_output.or(self.max_output);
+        self.max_file_size = layer.max_file_size.clone().or(self.max_file_size);
         self
     }
 
@@ -179,7 +183,8 @@ pub struct Invocation {
     pub python_args: Vec<OsString>,
 }
 
-const FLAGS_WITH_VALUE: [&str; 10] = [
+const FLAGS_WITH_VALUE: [&str; 11] = [
+    "--max-file-size",
     "--allow-read",
     "--allow-write",
     "--allow-env",
@@ -244,6 +249,10 @@ pub fn parse_invocation(args: &[OsString]) -> Result<Invocation> {
                         parse_memory(&value).map_err(|e| anyhow::anyhow!(e))?;
                         invocation.grants.memory = Some(value);
                     }
+                    "--max-file-size" => {
+                        parse_size(&value).map_err(|e| anyhow::anyhow!(e))?;
+                        invocation.grants.max_file_size = Some(value);
+                    }
                     "--max-output" => {
                         invocation.grants.max_output =
                             Some(value.parse().context("--max-output must be a number")?);
@@ -288,6 +297,9 @@ pub struct Policy {
     pub timeout_ms: u64,
     pub memory_bytes: u64,
     pub max_output: usize,
+    /// RLIMIT_FSIZE for the task; `None` leaves file sizes unlimited.
+    #[serde(default)]
+    pub max_file_size: Option<u64>,
     /// Capture output for a JSON result instead of passing it through.
     pub capture: bool,
 }
@@ -355,6 +367,12 @@ impl Policy {
         let timeout_ms = parse_duration(grants.timeout.as_deref().unwrap_or(DEFAULT_TIMEOUT))
             .map_err(|e| anyhow::anyhow!(e))?;
         let memory_bytes = parse_memory(grants.memory.as_deref().unwrap_or(DEFAULT_MEMORY))
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let max_file_size = grants
+            .max_file_size
+            .as_deref()
+            .map(parse_size)
+            .transpose()
             .map_err(|e| anyhow::anyhow!(e))?;
         for name in &grants.allow_env {
             if name.is_empty() || name.contains(['=', '\0']) {
@@ -436,6 +454,7 @@ impl Policy {
             timeout_ms,
             memory_bytes,
             max_output: max_output as usize,
+            max_file_size,
             capture,
         })
     }
@@ -461,6 +480,14 @@ pub fn parse_duration(value: &str) -> std::result::Result<u64, String> {
         return Err("Timeout must be at most 24h".into());
     }
     Ok(n)
+}
+
+/// A byte size with a unit (`k`, `m`, `g`), at least 1k.
+pub fn parse_size(value: &str) -> std::result::Result<u64, String> {
+    scaled(
+        &value.to_ascii_lowercase(),
+        &[("k", 1024), ("m", 1024 * 1024), ("g", 1024 * 1024 * 1024)],
+    )
 }
 
 pub fn parse_memory(value: &str) -> std::result::Result<u64, String> {

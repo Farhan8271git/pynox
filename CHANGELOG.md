@@ -19,6 +19,9 @@
   BPF without applying it to the Rust test runner.
 - Retain a JSONL pool with clean templates and disposable per-task children;
   accept inline `code` with an optional `name` instead of a script file.
+- Add `max_file_size` (flag, configuration, pool request, package) backed by
+  `RLIMIT_FSIZE`, with `SIGXFSZ` ignored so oversized writes raise `OSError`;
+  a `[pool.limits]` value caps requests and is their default.
 - Add persistent sessions to the pool: `"session": NAME` keeps one isolated
   process whose `__main__` survives between requests, with permissions fixed
   by the first request, `close`, idle timeout and a session limit;

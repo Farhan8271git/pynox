@@ -29,6 +29,7 @@ failure prints one `pynox:` line and exits 124 or 125.
 | `--timeout=5s` | Wall-clock limit, up to 24h |
 | `--memory=512m` | Address-space limit, minimum 32m |
 | `--max-output=65536` | Captured bytes per stream with `--json`, up to 16 MiB |
+| `--max-file-size=SIZE` | Largest size any written file may reach, e.g. `100m`; unlimited by default |
 | `--config=PATH` | `pynox.toml` to read; default `$PYNOX_CONFIG`, then `./pynox.toml` |
 | `--profile=NAME` | Apply a named profile from the configuration |
 | `--json` | Print one JSON result instead of passing output through |

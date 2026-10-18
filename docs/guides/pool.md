@@ -58,6 +58,7 @@ One JSON object per line. Exactly one of `script` and `code` is required.
 | `timeout` | `5s` | Wall time from execution start, excluding queue wait; up to 24h |
 | `memory` | `512m` | Address-space limit; minimum 32m |
 | `max_output` | `65536` | Captured bytes per stream, up to 16 MiB; excess is dropped |
+| `max_file_size` | unlimited | Largest size a written file may reach, e.g. `100m`; a `[pool.limits]` value is also the default |
 
 Unknown fields are rejected. A line longer than 1 MiB is discarded with an
 error and the next line is read normally.
@@ -79,6 +80,7 @@ allow_network = false
 timeout = "30s"
 memory = "1g"
 max_output = 1048576
+max_file_size = "256m"
 
 [profiles.analysis]
 allow_read = ["/srv/agent/data"]
@@ -90,8 +92,9 @@ allow_network = true
 
 `[pool]` provides defaults that the command line overrides. `[pool.limits]` is
 a ceiling: every path a request asks for must lie beneath a listed one, the
-network needs `allow_network = true` in the limits, and timeout, memory and
-output may not exceed them. A request outside the ceiling fails with
+network needs `allow_network = true` in the limits, and timeout, memory,
+output and file size may not exceed them. A `max_file_size` limit also applies
+to requests that do not set one. A request outside the ceiling fails with
 `RequestError` before anything runs. Profiles are presets a request names;
 its own fields are added on top, then the ceiling applies. The command-line
 `[permissions]` section does not apply to the pool. Relative paths in the file

@@ -1,7 +1,7 @@
 //! Optional `pynox.toml`: standing permissions, named profiles and pool
 //! defaults. The file is operator configuration, so it is discovered only
 //! where the operator put it, never next to the program being run.
-use crate::policy::{parse_duration, parse_memory, resolve_paths, Grants, Policy};
+use crate::policy::{parse_duration, parse_memory, parse_size, resolve_paths, Grants, Policy};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::{
@@ -102,6 +102,9 @@ impl Config {
             if let Some(memory) = &limits.memory {
                 parse_memory(memory).map_err(|e| anyhow::anyhow!(e))?;
             }
+            if let Some(size) = &limits.max_file_size {
+                parse_size(size).map_err(|e| anyhow::anyhow!(e))?;
+            }
             config.pool.limits = Some(Grants {
                 allow_read: resolve_paths(&limits.allow_read).context("pool.limits.allow_read")?,
                 allow_write: resolve_paths(&limits.allow_write)
@@ -155,11 +158,22 @@ impl Config {
             .with_context(|| format!("Unknown profile {name:?} in {}", self.path.display()))
     }
 
-    /// Enforce `[pool.limits]` on a resolved request policy.
-    pub fn check_limits(&self, policy: &Policy) -> Result<()> {
+    /// Enforce `[pool.limits]` on a resolved request policy. A file-size limit
+    /// also becomes the default for requests that do not set one.
+    pub fn check_limits(&self, policy: &mut Policy) -> Result<()> {
         let Some(limits) = &self.pool.limits else {
             return Ok(());
         };
+        if let Some(size) = &limits.max_file_size {
+            let maximum = parse_size(size).map_err(|e| anyhow::anyhow!(e))?;
+            match policy.max_file_size {
+                Some(requested) if requested > maximum => {
+                    bail!("max_file_size exceeds pool.limits ({size})")
+                }
+                Some(_) => {}
+                None => policy.max_file_size = Some(maximum),
+            }
+        }
         let beneath = |requested: &[PathBuf], allowed: &[PathBuf], what: &str| -> Result<()> {
             for path in requested {
                 if !allowed.iter().any(|root| path.starts_with(root)) {
