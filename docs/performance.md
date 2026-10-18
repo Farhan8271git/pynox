@@ -70,6 +70,37 @@ and asyncio integration. Use frameworks as workloads; do not replace their
 internals without evidence. Model/network waiting time in agents must be
 separated from local Python work.
 
+## Pool under load
+
+Measured on 2026-10-18 on the same host (32 CPUs, no affinity) with
+`scripts/benchmark_pool.py`: 400 jobs per configuration, submitted through the
+`pynox` package by twice as many client threads as workers, so each worker
+always has one job running and one waiting. Latency is request to result as
+the client sees it, queue included; RSS sums the pool's process tree.
+
+| Workload | Workers | Jobs/s | p50 | p95 | Idle RSS | Peak RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `print(1)` | 1 | 242 | 8.2 ms | 8.5 ms | 39 MiB | 39 MiB |
+|  | 2 | 469 | 8.5 ms | 8.8 ms | 61 MiB | 61 MiB |
+|  | 4 | 877 | 9.0 ms | 9.5 ms | 106 MiB | 106 MiB |
+|  | 8 | 1,574 | 10.0 ms | 10.5 ms | 194 MiB | 194 MiB |
+| 300k-iteration loop | 1 | 54 | 36.7 ms | 37.0 ms | 39 MiB | 57 MiB |
+|  | 2 | 109 | 36.7 ms | 37.1 ms | 61 MiB | 97 MiB |
+|  | 4 | 214 | 37.3 ms | 37.6 ms | 106 MiB | 176 MiB |
+|  | 8 | 422 | 37.6 ms | 38.2 ms | 194 MiB | 335 MiB |
+| Build and encode 2,000 records | 1 | 90 | 22.3 ms | 22.8 ms | 39 MiB | 59 MiB |
+|  | 2 | 177 | 22.6 ms | 23.0 ms | 61 MiB | 101 MiB |
+|  | 4 | 345 | 23.1 ms | 23.5 ms | 106 MiB | 185 MiB |
+|  | 8 | 656 | 24.2 ms | 24.7 ms | 194 MiB | 336 MiB |
+
+Throughput scales linearly with workers: every job is a fork of a warm
+template, and workers share nothing. Under this load a job waits for about one
+other, so p50 is twice the unloaded 4.5 ms for a tiny task. Each worker costs
+about 22 MiB resident when idle, a CPython template plus its supervisor
+thread; running children add their own allocations on top. All 4,800 jobs
+succeeded. Raw results are in the
+[measurement artifact](benchmarks/pool-load-v0.1.0-linux-aarch64.json).
+
 ## Pynox 0.1.0: local Linux aarch64 measurement
 
 Measured on 2026-10-18 with CPython 3.11.17, two CPU cores, seven shuffled

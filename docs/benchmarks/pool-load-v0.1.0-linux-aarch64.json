@@ -1,0 +1,239 @@
+{
+  "runtime": {
+    "architecture": "aarch64",
+    "landlock_abi": 7,
+    "note": "Kernel probes only; a sandboxed run still verifies the complete policy setup.",
+    "os": "linux",
+    "platform": "linux-gnu-aarch64",
+    "python": {
+      "abi": "cp311",
+      "executable": "/home/ec2-user/.local/share/uv/python/cpython-3.11.17-linux-aarch64-gnu/bin/python3.11",
+      "home": "/home/ec2-user/.local/share/uv/python/cpython-3.11.17-linux-aarch64-gnu",
+      "libdir": "/home/ec2-user/.local/share/uv/python/cpython-3.11.17-linux-aarch64-gnu/lib",
+      "major_minor": "3.11",
+      "platstdlib": "/home/ec2-user/.local/share/uv/python/cpython-3.11.17-linux-aarch64-gnu/lib/python3.11",
+      "site_packages": [
+        "/home/ec2-user/.local/share/uv/python/cpython-3.11.17-linux-aarch64-gnu/lib/python3.11/site-packages"
+      ],
+      "stdlib": "/home/ec2-user/.local/share/uv/python/cpython-3.11.17-linux-aarch64-gnu/lib/python3.11",
+      "version": "3.11.17"
+    },
+    "runtime": "pynox",
+    "runtime_supported": true,
+    "sandbox_supported": true,
+    "sandbox_unavailable_reasons": [],
+    "supported": true,
+    "version": "0.1.0"
+  },
+  "measured_at": "2026-10-18T10:50:48.929878+00:00",
+  "platform": "Linux-6.18.48-109.150.amzn2023.aarch64-aarch64-with-glibc2.34",
+  "cpus": 32,
+  "method": "400 jobs per configuration from 2x-workers client threads through the pynox package; warmup of 4 jobs per worker; latency is request to result as seen by the client; RSS sums the pool process tree from /proc, sampled every 50 results",
+  "binary_sha256": "7c4cad4ef7caf989bf90b4f9ee1d5279d016e53e78c1934360fb1405c336a615",
+  "results": [
+    {
+      "workload": "tiny",
+      "workers": 1,
+      "jobs": 400,
+      "throughput_per_s": 241.8,
+      "p50_ms": 8.23,
+      "p95_ms": 8.46,
+      "max_ms": 8.89,
+      "idle_rss_mib": 39.2,
+      "peak_rss_mib": 39.2,
+      "pool_counters": {
+        "jobs": 404,
+        "ok": 404,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "tiny",
+      "workers": 2,
+      "jobs": 400,
+      "throughput_per_s": 469.1,
+      "p50_ms": 8.47,
+      "p95_ms": 8.75,
+      "max_ms": 9.1,
+      "idle_rss_mib": 61.4,
+      "peak_rss_mib": 61.4,
+      "pool_counters": {
+        "jobs": 408,
+        "ok": 408,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "tiny",
+      "workers": 4,
+      "jobs": 400,
+      "throughput_per_s": 877.0,
+      "p50_ms": 9.02,
+      "p95_ms": 9.48,
+      "max_ms": 9.99,
+      "idle_rss_mib": 105.7,
+      "peak_rss_mib": 105.7,
+      "pool_counters": {
+        "jobs": 416,
+        "ok": 416,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "tiny",
+      "workers": 8,
+      "jobs": 400,
+      "throughput_per_s": 1573.7,
+      "p50_ms": 9.96,
+      "p95_ms": 10.52,
+      "max_ms": 10.96,
+      "idle_rss_mib": 194.2,
+      "peak_rss_mib": 194.3,
+      "pool_counters": {
+        "jobs": 432,
+        "ok": 432,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "cpu_20ms",
+      "workers": 1,
+      "jobs": 400,
+      "throughput_per_s": 54.5,
+      "p50_ms": 36.68,
+      "p95_ms": 37.05,
+      "max_ms": 37.2,
+      "idle_rss_mib": 39.2,
+      "peak_rss_mib": 56.8,
+      "pool_counters": {
+        "jobs": 404,
+        "ok": 404,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "cpu_20ms",
+      "workers": 2,
+      "jobs": 400,
+      "throughput_per_s": 109.0,
+      "p50_ms": 36.7,
+      "p95_ms": 37.08,
+      "max_ms": 37.28,
+      "idle_rss_mib": 61.4,
+      "peak_rss_mib": 96.6,
+      "pool_counters": {
+        "jobs": 408,
+        "ok": 408,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "cpu_20ms",
+      "workers": 4,
+      "jobs": 400,
+      "throughput_per_s": 214.1,
+      "p50_ms": 37.33,
+      "p95_ms": 37.58,
+      "max_ms": 38.04,
+      "idle_rss_mib": 105.7,
+      "peak_rss_mib": 176.2,
+      "pool_counters": {
+        "jobs": 416,
+        "ok": 416,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "cpu_20ms",
+      "workers": 8,
+      "jobs": 400,
+      "throughput_per_s": 422.1,
+      "p50_ms": 37.62,
+      "p95_ms": 38.24,
+      "max_ms": 39.05,
+      "idle_rss_mib": 194.2,
+      "peak_rss_mib": 335.3,
+      "pool_counters": {
+        "jobs": 432,
+        "ok": 432,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "json_64k",
+      "workers": 1,
+      "jobs": 400,
+      "throughput_per_s": 89.5,
+      "p50_ms": 22.29,
+      "p95_ms": 22.77,
+      "max_ms": 23.16,
+      "idle_rss_mib": 39.2,
+      "peak_rss_mib": 59.2,
+      "pool_counters": {
+        "jobs": 404,
+        "ok": 404,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "json_64k",
+      "workers": 2,
+      "jobs": 400,
+      "throughput_per_s": 177.0,
+      "p50_ms": 22.55,
+      "p95_ms": 23.03,
+      "max_ms": 23.97,
+      "idle_rss_mib": 61.4,
+      "peak_rss_mib": 101.4,
+      "pool_counters": {
+        "jobs": 408,
+        "ok": 408,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "json_64k",
+      "workers": 4,
+      "jobs": 400,
+      "throughput_per_s": 345.2,
+      "p50_ms": 23.11,
+      "p95_ms": 23.52,
+      "max_ms": 23.89,
+      "idle_rss_mib": 105.7,
+      "peak_rss_mib": 185.3,
+      "pool_counters": {
+        "jobs": 416,
+        "ok": 416,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    },
+    {
+      "workload": "json_64k",
+      "workers": 8,
+      "jobs": 400,
+      "throughput_per_s": 655.8,
+      "p50_ms": 24.22,
+      "p95_ms": 24.7,
+      "max_ms": 25.27,
+      "idle_rss_mib": 194.3,
+      "peak_rss_mib": 335.7,
+      "pool_counters": {
+        "jobs": 432,
+        "ok": 432,
+        "failed": 0,
+        "worker_errors": 0
+      }
+    }
+  ]
+}
