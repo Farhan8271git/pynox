@@ -10,20 +10,20 @@ This page says how changes get in, so contributors know what to expect.
 2. **Pull request.** Open a PR against `main`. CI must pass: the `ci-ok` check covers
    formatting, lint, Rust and Python tests, bundles and installs on every supported Linux
    platform and CPython version.
-3. **Review.** A maintainer reviews every PR, as `CODEOWNERS` requires. Squash merge keeps
-   `main` linear.
+3. **Review.** Every PR needs one approving review from a code owner, after its last push,
+   and every review thread resolved. Squash merge keeps `main` linear.
 4. **Decisions that change a contract** (CLI, pool protocol, configuration, sandbox
    policy, distribution) get an ADR in `ADR/` in the same PR.
 
 ## Branch and tag rules
 
-- `main` accepts changes only through pull requests with a passing `ci-ok` check. Force
-  pushes and deletion are blocked.
+- `main` accepts changes only through pull requests with a passing `ci-ok` check and an
+  approving code owner review. Force pushes and deletion are blocked.
 - Tags matching `v*` can be created only by maintainers and can never be moved or deleted.
   A tag triggers the release workflow, which builds a **draft** release for review.
-- Repository administrators can bypass these rules. While there is one maintainer, the
-  maintainer uses the bypass for release tags and for urgent fixes, and says so in the
-  commit message.
+- Repository administrators can bypass these rules. While there is one maintainer, nobody
+  else can approve the maintainer's own pull requests, so the maintainer merges them with
+  the bypass, after CI passes. The bypass is also used for release tags and urgent fixes.
 
 ## Security
 
@@ -34,5 +34,5 @@ and the OpenSSF Scorecard run on the repository.
 ## Becoming a maintainer
 
 Regular contributors whose reviews are consistently right will be invited. When there is
-more than one maintainer, `main` will require an approving review from someone other than
-the author, and this page will say how maintainers make decisions together.
+more than one maintainer, maintainers will review each other's pull requests instead of
+using the bypass, and this page will say how they make decisions together.

@@ -27,8 +27,9 @@ prerelease for review. Benchmarks are informational artifacts, not gates.
 
 Govern the repository with rulesets rather than legacy branch protection.
 `main` takes changes only through pull requests that pass a single aggregate
-`ci-ok` check, so the CI matrix can change without editing the rules; force
-pushes and deletion are blocked. `v*` tags can be created only by maintainers
+`ci-ok` check, so the CI matrix can change without editing the rules, and that
+have one approving code owner review after the last push; force pushes and
+deletion are blocked. `v*` tags can be created only by maintainers
 and never updated or deleted. Repository administrators may bypass both, which
 the single maintainer uses for release tags and urgent fixes. `CODEOWNERS`
 routes every change to a maintainer. The OpenSSF Scorecard and CodeQL for
@@ -44,8 +45,10 @@ with push protection and Dependabot security updates are on.
 - Require each CI job by name in branch rules: every new CPython version or
   platform would silently drop out of the requirement until someone edited
   the rules.
-- Require an approving review now: with one maintainer it would force a
-  bypass on every merge; require it once there are two.
+- Skip the review requirement while there is one maintainer: outside pull
+  requests need the maintainer's approval either way, and the maintainer's own
+  pull requests use the bypass, so requiring it costs little and states the
+  rule contributors will see.
 
 ## Consequences
 
