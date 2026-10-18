@@ -11,6 +11,7 @@ import json
 import queue
 import subprocess
 import threading
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -35,6 +36,7 @@ class Result:
     duration_ms: int
     truncated: bool
     policy: dict[str, Any] = field(default_factory=dict, repr=False)
+    raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
     @property
     def ok(self) -> bool:
@@ -219,6 +221,7 @@ class Pool:
             duration_ms=report.get("duration_ms", 0),
             truncated=bool(report.get("stdout_truncated") or report.get("stderr_truncated")),
             policy=report.get("policy", {}),
+            raw=report,
         )
 
     def tool(self, profile: str | None = None, **options: Any):
@@ -226,6 +229,14 @@ class Pool:
         from pynox._tool import make_tool
 
         return make_tool(self, profile=profile, **options)
+
+    def session(self, name: str | None = None, **grants: Any) -> Session:
+        """A persistent sandboxed process: variables survive between ``run`` calls.
+
+        ``grants`` are ``run``'s permission options and apply to the whole
+        session; they are sent with the first call and cannot change later.
+        """
+        return Session(self, name or f"session-{uuid.uuid4().hex[:12]}", grants)
 
     # Internals ----------------------------------------------------------
 
@@ -251,3 +262,76 @@ class Pool:
                 pending, self._pending = self._pending, {}
             for waiter in pending.values():
                 waiter.put(None)
+
+
+class Session:
+    """One isolated process whose ``__main__`` persists across ``run`` calls.
+
+    Errors in a step leave the session alive; a timeout, a crash or ``close``
+    end it, after which ``alive`` is False and the next ``run`` starts a new
+    process under the same name and grants.
+    """
+
+    def __init__(self, pool: Pool, name: str, grants: dict[str, Any]):
+        self.pool = pool
+        self.name = name
+        self._grants = grants
+        self.alive = False
+        self.steps = 0
+
+    def run(
+        self,
+        code: str,
+        *,
+        name: str = "agent.py",
+        args: Iterable[str] = (),
+        timeout: str | None = None,
+        max_output: int | None = None,
+    ) -> Result:
+        request: dict[str, Any] = {
+            "session": self.name,
+            "code": code,
+            "name": name,
+            "args": list(args),
+        }
+        if not self.alive:
+            request.update(_grant_fields(self._grants))
+        if timeout is not None:
+            request["timeout"] = timeout
+        if max_output is not None:
+            request["max_output"] = max_output
+        result = self.pool.request(request)
+        self.steps += 1
+        ended = result.raw.get("session_ended", False) if result.raw else False
+        self.alive = result.error is None or result.error.get("type") not in (
+            "RequestError",
+            "PoolWorkerError",
+        )
+        if ended:
+            self.alive = False
+        return result
+
+    def close(self) -> None:
+        if self.alive:
+            self.pool.request({"session": self.name, "close": True})
+        self.alive = False
+
+    def __enter__(self) -> Session:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
+
+def _grant_fields(grants: Mapping[str, Any]) -> dict[str, Any]:
+    fields: dict[str, Any] = {}
+    for key in ("allow_read", "allow_write", "package_dirs"):
+        paths = [str(Path(p)) for p in grants.get(key, ())]
+        if paths:
+            fields[key] = paths
+    for key in ("profile", "allow_network", "timeout", "memory", "max_output"):
+        if grants.get(key) is not None:
+            fields[key] = grants[key]
+    if grants.get("env"):
+        fields["env"] = dict(grants["env"])
+    return fields

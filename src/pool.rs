@@ -3,8 +3,9 @@ use crate::{
     capture,
     config::Config,
     forkserver::Template,
-    policy::{Grants, Policy, Program},
+    policy::{parse_duration, Grants, Policy, Program},
     preload::TemplateConfig,
+    session::{Session, Step},
     worker::Job,
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -12,13 +13,19 @@ use clap::Parser;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     io::{BufRead, Write},
     path::PathBuf,
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
+        Arc, Mutex,
+    },
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
+
+const DEFAULT_SESSION_LIMIT: usize = 16;
+const DEFAULT_SESSION_IDLE_MS: u64 = 600_000;
 
 const MAX_REQUEST: usize = 1_048_576;
 
@@ -52,6 +59,14 @@ pub struct PoolCli {
 struct Request {
     #[serde(default)]
     id: Value,
+    /// Run in a persistent session of this name: one isolated process whose
+    /// `__main__` survives between requests. Created by the first request,
+    /// which fixes its permissions; later requests only carry `code`.
+    #[serde(default)]
+    session: Option<String>,
+    /// With `session`, end it instead of running code.
+    #[serde(default)]
+    close: bool,
     /// Named profile from the pool's configuration; request fields widen it.
     #[serde(default)]
     profile: Option<String>,
@@ -85,6 +100,31 @@ struct Request {
 }
 
 impl Request {
+    /// A step for an existing session: inline code only, no permission fields.
+    fn step_overrides(&self) -> Result<(Option<u64>, Option<usize>)> {
+        if self.code.is_none() {
+            bail!("Session steps take inline code");
+        }
+        if self.script.is_some()
+            || self.profile.is_some()
+            || self.allow_network.is_some()
+            || self.memory.is_some()
+            || !self.allow_read.is_empty()
+            || !self.allow_write.is_empty()
+            || !self.package_dirs.is_empty()
+            || !self.env.is_empty()
+        {
+            bail!(
+                "Session permissions are fixed by its first request; later steps carry only code"
+            );
+        }
+        let timeout = match &self.timeout {
+            Some(value) => Some(parse_duration(value).map_err(|e| anyhow!(e))?),
+            None => None,
+        };
+        Ok((timeout, self.max_output.map(|n| n as usize)))
+    }
+
     fn job(self, config: Option<&Config>) -> Result<Job> {
         let program = match (self.script, self.code) {
             (Some(script), None) => {
@@ -141,7 +181,140 @@ impl Request {
         .into_iter()
         .collect();
         env.extend(self.env);
-        Ok(Job { policy, env })
+        Ok(Job {
+            policy,
+            env,
+            session: false,
+        })
+    }
+}
+
+type Sessions = Arc<Mutex<HashMap<String, SyncSender<Pending>>>>;
+
+/// Drive one session: create it on the first request, run steps, end it on
+/// `close`, a fatal step, idle timeout or pool shutdown.
+fn serve_session(
+    name: String,
+    receiver: Receiver<Pending>,
+    writer: Writer,
+    config: Arc<TemplateConfig>,
+    settings: Arc<Option<Config>>,
+    sessions: Sessions,
+    idle: Duration,
+) -> Result<()> {
+    let mut session: Option<Session> = None;
+    loop {
+        let pending = match receiver.recv_timeout(idle) {
+            Ok(pending) => pending,
+            Err(RecvTimeoutError::Timeout) => {
+                // The dispatcher sends while holding the map, so a request
+                // cannot slip in between this check and the removal.
+                let mut map = sessions.lock().unwrap();
+                match receiver.try_recv() {
+                    Ok(pending) => {
+                        drop(map);
+                        pending
+                    }
+                    Err(_) => {
+                        map.remove(&name);
+                        break;
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
+        let queued_us = pending.received.elapsed().as_micros();
+        let request = pending.request;
+        let mut result = if request.close {
+            // End the process but keep serving the name: a later request starts
+            // a fresh session, and the thread leaves on the idle timeout.
+            session = None;
+            json!({"exit": 0, "error": null, "stdout": "", "stderr": "", "closed": true})
+        } else if let Some(live) = session.as_mut() {
+            match request.step_overrides() {
+                Err(error) => failure(pending.id.clone(), "RequestError", format!("{error:#}")),
+                Ok((timeout, max_output)) => {
+                    let code = request.code.clone().unwrap_or_default();
+                    let step = Step {
+                        code: &code,
+                        name: request.name.as_deref().unwrap_or("agent.py"),
+                        args: &request.args,
+                    };
+                    let timeout = timeout.unwrap_or(live.policy.timeout_ms);
+                    let max_output = max_output.unwrap_or(live.policy.max_output);
+                    match live.step(&step, timeout, max_output) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            failure(pending.id.clone(), "PoolWorkerError", format!("{error:#}"))
+                                .tap_insert("session_ended", json!(true))
+                        }
+                    }
+                }
+            }
+        } else if request.code.is_none() {
+            failure(
+                pending.id.clone(),
+                "RequestError",
+                "Sessions take inline code".into(),
+            )
+        } else {
+            let code = request.code.clone().unwrap_or_default();
+            let step_name = request.name.clone().unwrap_or_else(|| "agent.py".into());
+            let args = request.args.clone();
+            let job = request.job(settings.as_ref().as_ref()).and_then(|mut job| {
+                config.apply_to_job(&mut job.policy)?;
+                job.session = true;
+                Ok(job)
+            });
+            match job {
+                Err(error) => failure(pending.id.clone(), "RequestError", format!("{error:#}")),
+                Ok(job) => match Session::start(&config, &job) {
+                    Err(error) => {
+                        failure(pending.id.clone(), "PoolWorkerError", format!("{error:#}"))
+                    }
+                    Ok(mut started) => {
+                        let step = Step {
+                            code: &code,
+                            name: &step_name,
+                            args: &args,
+                        };
+                        let timeout = started.policy.timeout_ms;
+                        let max_output = started.policy.max_output;
+                        match started.step(&step, timeout, max_output) {
+                            Ok(result) => {
+                                if started.alive() {
+                                    session = Some(started);
+                                }
+                                result
+                            }
+                            Err(error) => {
+                                failure(pending.id.clone(), "PoolWorkerError", format!("{error:#}"))
+                            }
+                        }
+                    }
+                },
+            }
+        };
+        if session.as_ref().is_some_and(|live| !live.alive()) {
+            session = None;
+        }
+        result["id"] = pending.id;
+        result["session"] = json!(name);
+        result["queue_us"] = json!(queued_us);
+        result["runtime"]["preloaded_modules"] = json!(config.modules);
+        emit(&writer, &result)?;
+    }
+    Ok(())
+}
+
+trait TapInsert {
+    fn tap_insert(self, key: &str, value: Value) -> Value;
+}
+
+impl TapInsert for Value {
+    fn tap_insert(mut self, key: &str, value: Value) -> Value {
+        self[key] = value;
+        self
     }
 }
 
@@ -190,6 +363,17 @@ pub fn run(options: PoolCli) -> Result<()> {
     let templates = (0..workers)
         .map(|_| Template::start(&config))
         .collect::<Result<Vec<_>>>()?;
+    let session_limit = section
+        .and_then(|p| p.max_sessions)
+        .map_or(DEFAULT_SESSION_LIMIT, usize::from);
+    let session_idle =
+        Duration::from_millis(match section.and_then(|p| p.session_idle.as_deref()) {
+            Some(value) => parse_duration(value).map_err(|e| anyhow!(e))?,
+            None => DEFAULT_SESSION_IDLE_MS,
+        });
+    let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+    let session_threads: Arc<Mutex<Vec<thread::JoinHandle<Result<()>>>>> =
+        Arc::new(Mutex::new(Vec::new()));
     let (sender, receiver) = mpsc::sync_channel::<Pending>(workers as usize * 2);
     let receiver = Arc::new(Mutex::new(receiver));
     let threads: Vec<_> = templates
@@ -260,7 +444,8 @@ pub fn run(options: PoolCli) -> Result<()> {
             "preloaded_modules": config.modules, "package_dirs": config.package_dirs,
             "config": settings.as_ref().as_ref().map(|c| c.path.clone()),
             "profiles": settings.as_ref().as_ref()
-                .map(|c| c.profiles.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()}),
+                .map(|c| c.profiles.keys().cloned().collect::<Vec<_>>()).unwrap_or_default(),
+            "sessions": {"max": session_limit, "idle_ms": session_idle.as_millis() as u64}}),
     )?;
     let input_result = (|| -> Result<()> {
         let mut input = std::io::stdin().lock();
@@ -296,13 +481,77 @@ pub fn run(options: PoolCli) -> Result<()> {
             match raw.and_then(serde_json::from_value::<Request>) {
                 Ok(mut request) => {
                     request.id = id.clone();
-                    sender
-                        .send(Pending {
-                            id,
-                            request,
-                            received,
-                        })
-                        .map_err(|_| anyhow!("Pool workers stopped"))?;
+                    let pending = Pending {
+                        id: id.clone(),
+                        request,
+                        received,
+                    };
+                    let Some(name) = pending.request.session.clone() else {
+                        sender
+                            .send(pending)
+                            .map_err(|_| anyhow!("Pool workers stopped"))?;
+                        continue;
+                    };
+                    // Route to the session's own thread; hold the map while
+                    // sending so an idle session cannot vanish underneath.
+                    let mut map = sessions.lock().unwrap();
+                    let session_sender = match map.get(&name) {
+                        Some(existing) => existing.clone(),
+                        None if pending.request.close => {
+                            drop(map);
+                            emit(
+                                &writer,
+                                &failure(id, "RequestError", format!("Unknown session {name:?}")),
+                            )?;
+                            continue;
+                        }
+                        None if map.len() >= session_limit => {
+                            drop(map);
+                            emit(
+                                &writer,
+                                &failure(
+                                    id,
+                                    "RequestError",
+                                    format!("Session limit reached ({session_limit})"),
+                                ),
+                            )?;
+                            continue;
+                        }
+                        None => {
+                            let (session_sender, session_receiver) =
+                                mpsc::sync_channel::<Pending>(8);
+                            map.insert(name.clone(), session_sender.clone());
+                            let handle = thread::spawn({
+                                let (name, writer, config, settings, sessions) = (
+                                    name.clone(),
+                                    Arc::clone(&writer),
+                                    Arc::clone(&config),
+                                    Arc::clone(&settings),
+                                    Arc::clone(&sessions),
+                                );
+                                move || {
+                                    serve_session(
+                                        name,
+                                        session_receiver,
+                                        writer,
+                                        config,
+                                        settings,
+                                        sessions,
+                                        session_idle,
+                                    )
+                                }
+                            });
+                            session_threads.lock().unwrap().push(handle);
+                            session_sender
+                        }
+                    };
+                    if session_sender.try_send(pending).is_err() {
+                        drop(map);
+                        emit(
+                            &writer,
+                            &failure(id, "RequestError", format!("Session {name:?} is busy")),
+                        )?;
+                    }
                 }
                 Err(error) => emit(&writer, &failure(id, "RequestError", error.to_string()))?,
             }
@@ -310,10 +559,17 @@ pub fn run(options: PoolCli) -> Result<()> {
         Ok(())
     })();
     drop(sender);
+    sessions.lock().unwrap().clear();
     for thread in threads {
         thread
             .join()
             .map_err(|_| anyhow!("Pool thread panicked"))??;
+    }
+    let handles = std::mem::take(&mut *session_threads.lock().unwrap());
+    for handle in handles {
+        handle
+            .join()
+            .map_err(|_| anyhow!("Session thread panicked"))??;
     }
     input_result
 }

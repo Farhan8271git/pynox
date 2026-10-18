@@ -15,6 +15,10 @@
 - Support asyncio's internal wakeup socketpair and opt-in IPv4/IPv6.
 - Retain a JSONL pool with clean templates and disposable per-task children;
   accept inline `code` with an optional `name` instead of a script file.
+- Add persistent sessions to the pool: `"session": NAME` keeps one isolated
+  process whose `__main__` survives between requests, with permissions fixed
+  by the first request, `close`, idle timeout and a session limit;
+  `pynox.tool(session=True)` and `Pool.session()` expose it.
 - Ship the `pynox` Python package: `pynox.run`, `pynox.tool` and `Pool` over
   the pool protocol, with a per-CPython-minor wheel (`make wheel`) that embeds
   the binary and a matching CPython and installs a `pynox` console script.

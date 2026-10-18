@@ -13,7 +13,7 @@ use std::{
     collections::BTreeMap,
     ffi::{CStr, CString},
     fs::File,
-    io::Read,
+    io::{BufRead, BufReader, Read},
     mem::MaybeUninit,
     os::fd::{AsRawFd, FromRawFd},
     path::Path,
@@ -24,6 +24,23 @@ use std::{
 pub struct Job {
     pub policy: Policy,
     pub env: BTreeMap<String, String>,
+    /// Keep the process alive and run newline-delimited steps on descriptor 4.
+    #[serde(default)]
+    pub session: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct StepRequest {
+    #[serde(default)]
+    code: String,
+    #[serde(default = "default_step_name")]
+    name: String,
+    #[serde(default)]
+    close: bool,
+}
+
+fn default_step_name() -> String {
+    "agent.py".into()
 }
 
 const REPORT_FD: libc::c_int = 3;
@@ -36,16 +53,20 @@ pub fn run(warm: bool) -> i32 {
                 "exit": 125,
                 "error": {"type": "SandboxSetupError", "message": format!("{error:#}")}
             });
-            write_report(&report);
+            write_report(&report, false);
             125
         }
     }
 }
 
 /// Write the diagnostic report without closing the descriptor: a later setup
-/// failure must still be able to report on the same channel.
-fn write_report(report: &Value) {
+/// failure must still be able to report on the same channel. Sessions send
+/// one report per step, newline-delimited.
+fn write_report(report: &Value, newline: bool) {
     let mut payload = report.to_string().into_bytes();
+    if newline {
+        payload.push(b'\n');
+    }
     while !payload.is_empty() {
         let written = unsafe { libc::write(REPORT_FD, payload.as_ptr().cast(), payload.len()) };
         if written < 0 {
@@ -60,28 +81,37 @@ fn write_report(report: &Value) {
 
 fn execute(warm: bool) -> Result<i32> {
     let mut input = String::new();
-    let (policy, env) = if warm {
-        // Pool children receive the job on stdin, then lose it.
-        std::io::stdin()
-            .take(1_048_576)
-            .read_to_string(&mut input)?;
+    let mut control: Option<BufReader<File>> = None;
+    let (policy, env, session) = if warm {
+        // Pool children receive the job as the first line on stdin, then lose
+        // stdin. Sessions keep reading steps from a copy on descriptor 4.
+        if unsafe { libc::dup2(0, 4) } < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let mut reader = BufReader::new(unsafe { File::from_raw_fd(4) });
+        reader.by_ref().take(1_048_576).read_line(&mut input)?;
         let null = File::open("/dev/null")?;
         if unsafe { libc::dup2(null.as_raw_fd(), 0) } < 0 {
             return Err(std::io::Error::last_os_error().into());
         }
         let job: Job = serde_json::from_str(&input)?;
-        (job.policy, Some(job.env))
+        if job.session {
+            control = Some(reader);
+        }
+        (job.policy, Some(job.env), job.session)
     } else {
         // Cold workers receive the policy on descriptor 4; stdin is whatever the
         // supervisor chose: the user's terminal in passthrough mode, /dev/null with --json.
         let mut pipe = unsafe { File::from_raw_fd(4) };
         pipe.by_ref().take(1_048_576).read_to_string(&mut input)?;
         drop(pipe);
-        (serde_json::from_str(&input)?, None)
+        (serde_json::from_str(&input)?, None, false)
     };
     let python = python_info();
-    // No caller-provided descriptors beyond stdio and the report are exposed to user code.
-    if unsafe { libc::syscall(libc::SYS_close_range, 4u32, u32::MAX, 0u32) } != 0 {
+    // No caller-provided descriptors beyond stdio, the report and a session's
+    // control channel are exposed to user code.
+    let first_closed = if session { 5u32 } else { 4u32 };
+    if unsafe { libc::syscall(libc::SYS_close_range, first_closed, u32::MAX, 0u32) } != 0 {
         bail!("close_range failed: {}", std::io::Error::last_os_error());
     }
     sandbox::apply(&policy, &python)?;
@@ -91,11 +121,16 @@ fn execute(warm: bool) -> Result<i32> {
     if !warm {
         initialize(&python)?;
     }
-    let report = unsafe {
-        if let Some(env) = env {
+    if let Some(env) = env {
+        unsafe {
             let result = call_bootstrap(c"_pynox_env", vec![string_dict(&env)?])?;
             py::Py_DECREF(result);
         }
+    }
+    if let Some(control) = control {
+        return run_session(control, &policy, &python);
+    }
+    let report = unsafe {
         let optional = |text: &Option<String>| -> Result<*mut py::PyObject> {
             match text {
                 Some(text) => unicode(text),
@@ -127,7 +162,72 @@ fn execute(warm: bool) -> Result<i32> {
         }
         _ => bail!("Bootstrap returned an invalid report"),
     };
-    write_report(&report);
+    write_report(&report, false);
+    let code = unsafe { py::Py_FinalizeEx() };
+    if code < 0 {
+        bail!("Python finalization failed");
+    }
+    Ok(0)
+}
+
+/// Keep one `__main__` alive and run each step the supervisor sends until it
+/// closes the session or the control channel ends.
+fn run_session(mut control: BufReader<File>, policy: &Policy, python: &PythonInfo) -> Result<i32> {
+    // The session replaces `__main__` with the user's module; keep the step
+    // function from the bootstrap's namespace before that happens.
+    let step_function = unsafe { bootstrap_function(c"_pynox_session_step")? };
+    unsafe {
+        let arguments = vec![
+            unicode(utf8(&policy.script)?)?,
+            unicode(&policy.argv0)?,
+            string_list(policy.args.iter().map(String::as_str))?,
+            path_list(&policy.package_dirs)?,
+            path_list(&python.site_packages)?,
+            py::PyBool_FromLong(policy.capture as libc::c_long),
+        ];
+        let started = call_bootstrap(c"_pynox_session_start", arguments)?;
+        py::Py_DECREF(started);
+    }
+    let mut line = String::new();
+    loop {
+        line.clear();
+        if control.by_ref().take(1_048_576).read_line(&mut line)? == 0 {
+            break;
+        }
+        let step: StepRequest = match serde_json::from_str(&line) {
+            Ok(step) => step,
+            Err(error) => {
+                write_report(
+                    &json!({"exit": 125, "error": {"type": "RequestError", "message": format!("Invalid step: {error}")}}),
+                    true,
+                );
+                continue;
+            }
+        };
+        if step.close {
+            break;
+        }
+        let report = unsafe {
+            let result = call_function(
+                step_function,
+                vec![unicode(&step.code)?, unicode(&step.name)?],
+            )?;
+            let report = to_json(result);
+            py::Py_DECREF(result);
+            report
+        };
+        let exit = report
+            .get(0)
+            .and_then(Value::as_u64)
+            .filter(|code| *code <= 255);
+        let report = match exit {
+            Some(exit) if report.get(1).is_some_and(|e| e.is_null() || e.is_object()) => {
+                json!({"exit": exit, "error": report[1]})
+            }
+            _ => bail!("Session step returned an invalid report"),
+        };
+        write_report(&report, true);
+    }
     let code = unsafe { py::Py_FinalizeEx() };
     if code < 0 {
         bail!("Python finalization failed");
@@ -271,12 +371,9 @@ unsafe fn string_dict(map: &BTreeMap<String, String>) -> Result<*mut py::PyObjec
     Ok(dict)
 }
 
-/// Call a trusted function defined by the bootstrap in `__main__`. Arguments
-/// are owned references and are consumed; the result is a new reference.
-unsafe fn call_bootstrap(
-    name: &CStr,
-    arguments: Vec<*mut py::PyObject>,
-) -> Result<*mut py::PyObject> {
+/// A trusted function defined by the bootstrap in `__main__`, as a new
+/// reference. Look functions up before user code replaces `__main__`.
+unsafe fn bootstrap_function(name: &CStr) -> Result<*mut py::PyObject> {
     let main = py::PyImport_ImportModule(c"__main__".as_ptr());
     if main.is_null() {
         bail!("Cannot access bootstrap module");
@@ -287,13 +384,32 @@ unsafe fn call_bootstrap(
         py::PyErr_Clear();
         bail!("Bootstrap function {} is missing", name.to_string_lossy());
     }
+    Ok(function)
+}
+
+/// Call a trusted bootstrap function by name. Arguments are owned references
+/// and are consumed; the result is a new reference.
+unsafe fn call_bootstrap(
+    name: &CStr,
+    arguments: Vec<*mut py::PyObject>,
+) -> Result<*mut py::PyObject> {
+    let function = bootstrap_function(name)?;
+    let result = call_function(function, arguments);
+    py::Py_DECREF(function);
+    result
+}
+
+/// Call `function` (a borrowed reference) with owned arguments, consuming them.
+unsafe fn call_function(
+    function: *mut py::PyObject,
+    arguments: Vec<*mut py::PyObject>,
+) -> Result<*mut py::PyObject> {
     let tuple = py::PyTuple_New(arguments.len() as isize);
     for (index, argument) in arguments.into_iter().enumerate() {
         py::PyTuple_SET_ITEM(tuple, index as isize, argument);
     }
     let result = py::PyObject_Call(function, tuple, ptr::null_mut());
     py::Py_DECREF(tuple);
-    py::Py_DECREF(function);
     if result.is_null() {
         py::PyErr_Print();
         bail!("Python bootstrap failed");

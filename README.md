@@ -132,7 +132,8 @@ For files, grant the specific path with --allow-read/--allow-write. ...
 `pynox.run(code)` gives the same result as an object with `ok`, `text`,
 `stdout` and a structured `error`. Each call forks a fresh process from a warm
 CPython template, so preloaded libraries cost nothing per call and nothing
-leaks between calls. The package is a thin client of `pynox pool`, a JSON
+leaks between calls. `pynox.tool(session=True)` keeps one isolated process
+instead, so a variable defined in one call is there in the next. The package is a thin client of `pynox pool`, a JSON
 Lines protocol you can drive from any language.
 
 The wheel embeds the binary and a CPython of the **same minor version as your

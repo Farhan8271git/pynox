@@ -12,7 +12,7 @@ The package talks to the ``pynox pool`` process; permissions live in flags or
 """
 
 from pynox._binary import binary_path
-from pynox._client import Pool, PoolError, Result
+from pynox._client import Pool, PoolError, Result, Session
 from pynox._tool import default_pool, run, tool
 
 __version__ = "0.1.0"
@@ -21,6 +21,7 @@ __all__ = [
     "Pool",
     "PoolError",
     "Result",
+    "Session",
     "__version__",
     "binary_path",
     "default_pool",

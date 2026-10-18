@@ -35,7 +35,12 @@ through the pool answers in about 4.7 ms against 7.7 ms for a new `python`.
 ## Consequences
 
 Authorized disk changes persist. Preload-time environment and state are fixed
-at template creation. Native extension fork safety still matters. Persistent
-sessions, where an agent keeps variables between calls in one isolated
-process, are the next lifecycle contract (ADR 011) and must be explicit,
-never the default.
+at template creation. Native extension fork safety still matters.
+
+Sessions are the explicit exception to one-process-per-task. A request naming
+a `session` gets a dedicated template and child whose `__main__` persists
+across steps; permissions are fixed by the first request and later steps carry
+only code. Exceptions keep a session alive, timeouts and crashes end it, idle
+sessions close after a configurable time and the pool caps their number. A
+session trades isolation between steps for state, so it is never implicit and
+its results say which session and step they belong to.

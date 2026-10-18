@@ -14,6 +14,7 @@ mod preload;
 mod runner;
 mod runtime;
 mod sandbox;
+mod session;
 mod worker;
 
 use clap::Parser;

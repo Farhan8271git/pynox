@@ -49,7 +49,19 @@ run_python = pynox.tool(allow_read=["data"], allow_write=["out"], timeout="10s",
 ```
 
 Behind it is one pool for the process, started on first call and closed at
-exit. For several permission sets or explicit lifecycle, build pools yourself:
+exit. Add `session=True` and the tool keeps one isolated process, so a variable
+defined in one call is there in the next, like a notebook:
+
+```python
+notebook = pynox.tool(session=True, allow_read=["data"])
+notebook("import pandas as pd\ndf = pd.read_csv('data/orders.csv')")
+notebook("print(df.describe())")                 # df is still there
+```
+
+A Python error leaves the session alive; a timeout or a crash ends it and the
+next call starts a fresh process. `Pool.session()` gives the same thing as an
+object with `run`, `close`, `alive` and `steps`. For several permission sets or
+explicit lifecycle, build pools yourself:
 
 ```python
 analysis = pynox.Pool(workers=2, preload=["pandas"], config="pynox.toml")

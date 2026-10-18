@@ -270,7 +270,7 @@ pub fn parse_invocation(args: &[OsString]) -> Result<Invocation> {
 }
 
 /// Resolved, validated policy for one task. Serialized to the worker.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Policy {
     pub allow_network: bool,
     /// Script path, or the label of inline code or the module name.

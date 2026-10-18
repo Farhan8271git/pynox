@@ -31,9 +31,10 @@ contains no agent loop, prompt or framework adapter, so Pynox serves
 frameworks instead of competing with them. Its wheel is tagged per CPython
 minor and embeds a matching CPython, so the sandbox imports the packages of
 the environment that installed it. `examples/agent_tool.py` and
-`examples/monty_bridge.py` use it and run in the test suite. Next contracts,
-in order: explicit persistent sessions in the pool, a tool bridge from
-sandboxed code back to the host, and network allowlists by domain.
+`examples/monty_bridge.py` use it and run in the test suite. Sessions
+(ADR 005) are exposed as `Pool.session()` and `tool(session=True)`. Next
+contracts, in order: a tool bridge from sandboxed code back to the host, and
+network allowlists by domain.
 
 ## Alternatives considered
 

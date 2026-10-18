@@ -35,6 +35,10 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct PoolSection {
     pub workers: Option<u16>,
+    /// Concurrent persistent sessions (default 16).
+    pub max_sessions: Option<u16>,
+    /// Close a session idle for this long (default `10m`).
+    pub session_idle: Option<String>,
     #[serde(default)]
     pub preload: Vec<String>,
     #[serde(default)]
@@ -86,6 +90,9 @@ impl Config {
             if directory.is_relative() {
                 *directory = base.join(&*directory);
             }
+        }
+        if let Some(idle) = &config.pool.session_idle {
+            parse_duration(idle).map_err(|e| anyhow::anyhow!(e))?;
         }
         if let Some(limits) = config.pool.limits.take() {
             let limits = limits.anchored(base);

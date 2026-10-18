@@ -41,8 +41,10 @@ def tool(profile: str | None = None, **options: Any) -> Callable[[str], str]:
     (``external_lookup={"run_python": pynox.tool()}``).
 
     ``profile`` names a permission set from ``pynox.toml``; keyword options are
-    ``Pool.run``'s and apply to every call. ``name`` and ``description`` change
-    what the model sees. The model only ever supplies ``code``.
+    ``Pool.run``'s and apply to every call. ``session=True`` keeps one isolated
+    process for the tool, so variables survive between calls. ``name`` and
+    ``description`` change what the model sees. The model only ever supplies
+    ``code``.
     """
     return make_tool(default_pool(), profile=profile, **options)
 
@@ -53,15 +55,25 @@ def make_tool(
     profile: str | None = None,
     name: str = "run_python",
     description: str | None = None,
+    session: bool | str = False,
     **options: Any,
 ) -> Callable[[str], str]:
-    def run_python(code: str) -> str:
-        return pool.run(code, profile=profile, **options).text
+    if session:
+        # One persistent process: variables defined in one call are there in the next.
+        state = pool.session(None if session is True else session, profile=profile, **options)
+
+        def run_python(code: str) -> str:
+            return state.run(code).text
+
+    else:
+
+        def run_python(code: str) -> str:
+            return pool.run(code, profile=profile, **options).text
 
     run_python.__name__ = name
     run_python.__qualname__ = name
     run_python.__annotations__ = {"code": str, "return": str}
-    run_python.__doc__ = description or _describe(profile, options)
+    run_python.__doc__ = description or _describe(profile, {**options, "session": bool(session)})
     return run_python
 
 
@@ -89,5 +101,7 @@ def _describe(profile: str | None, options: dict[str, Any]) -> str:
         lines.append(
             "The code has no file, network or environment access beyond the standard library."
         )
+    if options.get("session"):
+        lines.append("Variables and imports persist between calls, like a notebook.")
     lines.append("Errors come back as the exception type, message, line and a hint.")
     return "\n".join(lines)

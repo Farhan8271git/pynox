@@ -44,6 +44,8 @@ One JSON object per line. Exactly one of `script` and `code` is required.
 | --- | --- | --- |
 | `id` | line number | Copied into the result; assign unique IDs |
 | `profile` | | Named permission set from the configuration; the request's own fields add to it |
+| `session` | | Run in a persistent session of this name; see below |
+| `close` | `false` | With `session`, end the session instead of running code |
 | `code` | | Inline program text. No file, no file access, no `__file__` |
 | `name` | `<code>` | Label for inline code in errors and `sys.argv[0]` |
 | `script` | | Path of a file to run; only that file is implicitly readable |
@@ -67,6 +69,8 @@ error and the next line is read normally.
 workers = 4
 preload = ["pandas"]
 package_dirs = ["/srv/agent/site-packages"]
+max_sessions = 32
+session_idle = "15m"
 
 [pool.limits]
 allow_read = ["/srv/agent/data"]
@@ -119,6 +123,36 @@ Error `type` is the Python exception class, or one of `RequestError`,
 `TimeoutError`, `SignalError`, `SandboxSetupError`, `PoolWorkerError`.
 `file` and `line` point at the script or inline `name`; `hint` is present for
 permission and memory errors.
+
+## Sessions
+
+A session is one isolated process whose `__main__` survives between requests,
+for agents that define a variable in one call and use it in the next.
+
+```json
+{"id": 1, "session": "notebook-7", "code": "import pandas as pd\ndf = pd.read_csv('data/orders.csv')", "allow_read": ["data"]}
+{"id": 2, "session": "notebook-7", "code": "print(df.groupby('product').amount.sum())"}
+{"id": 3, "session": "notebook-7", "close": true}
+```
+
+- The first request creates the session and fixes its permissions, limits and
+  environment. Later requests carry only `code`, `name`, `args`, and optionally
+  `timeout` and `max_output` for that step; any permission field is a
+  `RequestError`. Sessions take inline code, not `script`.
+- A Python exception leaves the session alive, like a notebook cell. A timeout,
+  a crash or an exit ends it; the result then carries `"session_ended": true`
+  and the next request under the same name starts a new process, with the
+  permissions that request brings.
+- Results carry `"session"` and `"step"`. `close` answers `{"closed": true}`.
+- Each session owns a template process and its child, started on demand; the
+  first step pays the template start (about 30 ms, plus preloaded imports).
+- `[pool] max_sessions` (default 16) caps concurrent sessions; a session idle
+  for `[pool] session_idle` (default `10m`) is closed. Sessions end with the
+  pool. Steps to a session queue behind each other; a session with eight
+  pending steps answers `RequestError` until it catches up.
+
+From Python: `Pool.session(**grants)` returns a `Session` with `run` and
+`close`, and `pynox.tool(session=True)` gives a model a stateful tool.
 
 ## Lifecycle
 

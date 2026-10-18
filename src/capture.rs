@@ -30,16 +30,16 @@ pub fn pipe() -> Result<(File, File)> {
     Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
 }
 
-struct Stream {
-    file: File,
-    data: Vec<u8>,
-    maximum: usize,
-    truncated: bool,
-    eof: bool,
+pub(crate) struct Stream {
+    pub(crate) file: File,
+    pub(crate) data: Vec<u8>,
+    pub(crate) maximum: usize,
+    pub(crate) truncated: bool,
+    pub(crate) eof: bool,
 }
 
 impl Stream {
-    fn new(file: File, maximum: usize) -> Result<Self> {
+    pub(crate) fn new(file: File, maximum: usize) -> Result<Self> {
         let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFL) };
         if flags < 0
             || unsafe { libc::fcntl(file.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
@@ -55,7 +55,14 @@ impl Stream {
         })
     }
 
-    fn read_available(&mut self) -> Result<()> {
+    /// Forget the previous step's output and apply a new capture limit.
+    pub(crate) fn reset(&mut self, maximum: usize) {
+        self.data.clear();
+        self.truncated = false;
+        self.maximum = maximum;
+    }
+
+    pub(crate) fn read_available(&mut self) -> Result<()> {
         let mut buffer = [0; 8192];
         for _ in 0..16 {
             match self.file.read(&mut buffer) {

@@ -94,6 +94,8 @@ allow_network = true
 [pool]                             # pynox pool --config pynox.toml
 workers = 4
 preload = ["pandas"]
+max_sessions = 16                  # persistent sessions, see the pool protocol
+session_idle = "10m"
 
 [pool.limits]                      # no request may exceed these
 allow_read = ["data"]
