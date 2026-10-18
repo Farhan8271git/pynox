@@ -15,8 +15,11 @@
 - Support asyncio's internal wakeup socketpair and opt-in IPv4/IPv6.
 - Retain a JSONL pool with clean templates and disposable per-task children;
   accept inline `code` with an optional `name` instead of a script file.
-- Add tested agent integration examples: a framework-agnostic pool tool and a
-  Monty bridge where Monty orchestrates and Pynox executes.
+- Ship the `pynox` Python package: `pynox.run`, `pynox.tool` and `Pool` over
+  the pool protocol, with a per-CPython-minor wheel (`make wheel`) that embeds
+  the binary and a matching CPython and installs a `pynox` console script.
+- Add tested agent integration examples on that package: a tool for any
+  framework and a Monty bridge where Monty orchestrates and Pynox executes.
 - Apply a bounded `json.dump` fast path transparently, installed lazily when the
   application imports `json`; `--optimize-json` and the pool's `optimize_json`
   field no longer exist.

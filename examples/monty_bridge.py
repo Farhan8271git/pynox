@@ -13,21 +13,21 @@ import os
 from pathlib import Path
 
 import pydantic_monty
-from agent_tool import PynoxPool
+import pynox
 
 # What an LLM would write for the task "average these readings and store them".
 # It runs inside Monty; `run_python` is the only way out of its sandbox.
 AGENT_CODE = """
 import json
 
-job = run_python('''
+job = run_python(\'\'\'
 import json, statistics
 values = [3, 9, 27]
 summary = {"mean": statistics.mean(values), "count": len(values)}
 with open("{work_dir}/stats.json", "w") as f:
     json.dump(summary, f)
 print(json.dumps(summary))
-''')
+\'\'\')
 if job["exit"] != 0:
     error = job["error"]
     raise RuntimeError(f"{error['type']} at line {error['line']}: {error['message']}")
@@ -37,7 +37,7 @@ json.loads(job["stdout"])["mean"]
 
 def run_agent(work_dir: str | os.PathLike[str], *, binary: str | os.PathLike[str] | None = None):
     work_dir = Path(work_dir)
-    with PynoxPool(workers=1, binary=binary) as pool, pydantic_monty.Monty() as monty:
+    with pynox.Pool(workers=1, binary=binary) as pool, pydantic_monty.Monty() as monty:
 
         def run_python(code: str, timeout: str = "10s") -> dict:
             # Permissions are fixed here. The model never sees or chooses them.

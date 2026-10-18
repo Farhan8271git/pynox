@@ -53,7 +53,7 @@ print(json.dumps({
         ("optimizations", "<pynox-runtime>"),
         ("json_runtime", "<pynox-json>"),
     ] {
-        let source = format!("python/pynox/{name}.py");
+        let source = format!("python/pynox/_embedded/{name}.py");
         println!("cargo:rerun-if-changed={source}");
         let compiled = Command::new(&python)
             .args([

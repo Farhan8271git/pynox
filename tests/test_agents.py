@@ -9,15 +9,16 @@ from pathlib import Path
 
 import test_runtime as runtime
 
+sys.path.insert(0, str(runtime.ROOT / "python"))
 sys.path.insert(0, str(runtime.ROOT / "examples"))
 
-from agent_tool import PynoxPool  # noqa: E402
+import pynox  # noqa: E402
 
 
 class AgentToolTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.pool = PynoxPool(workers=1, binary=runtime.BINARY)
+        cls.pool = pynox.Pool(workers=1, binary=runtime.BINARY).start()
 
     @classmethod
     def tearDownClass(cls):
@@ -33,6 +34,7 @@ class AgentToolTests(unittest.TestCase):
         self.assertEqual((second.error["file"], second.error["line"]), ("second.py", 1))
         self.assertIn("NameError", second.describe())
         self.assertIn("second.py:1", second.describe())
+        self.assertEqual(second.text, second.describe())
 
     def test_host_chooses_permissions_not_the_code(self):
         with tempfile.TemporaryDirectory(prefix="pynox-agent-") as temporary:

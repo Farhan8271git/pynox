@@ -1,0 +1,93 @@
+"""`pynox.run` and `pynox.tool`: the two calls most applications need."""
+
+from __future__ import annotations
+
+import atexit
+import threading
+from typing import Any, Callable
+
+from pynox._client import Pool, Result
+
+_default: Pool | None = None
+_default_lock = threading.Lock()
+
+
+def default_pool() -> Pool:
+    """The process-wide pool behind ``pynox.run`` and ``pynox.tool``.
+
+    It starts on first use with the pool's own defaults and the ``pynox.toml``
+    the binary discovers (``$PYNOX_CONFIG``, then the current directory), and
+    closes at interpreter exit. Build a ``Pool`` yourself for other settings.
+    """
+    global _default
+    with _default_lock:
+        if _default is None:
+            _default = Pool()
+            atexit.register(_default.close)
+        return _default
+
+
+def run(code: str, **options: Any) -> Result:
+    """Run ``code`` sandboxed on the default pool. Options are ``Pool.run``'s."""
+    return default_pool().run(code, **options)
+
+
+def tool(profile: str | None = None, **options: Any) -> Callable[[str], str]:
+    """A ``run_python(code: str) -> str`` function ready to register as an agent tool.
+
+    Every agent framework accepts a typed, documented Python function, so the
+    same object works with Pydantic AI (``tools=[pynox.tool()]``), Strands
+    (``tool(pynox.tool())``), smolagents (``tool(pynox.tool())``) and Monty
+    (``external_lookup={"run_python": pynox.tool()}``).
+
+    ``profile`` names a permission set from ``pynox.toml``; keyword options are
+    ``Pool.run``'s and apply to every call. ``name`` and ``description`` change
+    what the model sees. The model only ever supplies ``code``.
+    """
+    return make_tool(default_pool(), profile=profile, **options)
+
+
+def make_tool(
+    pool: Pool,
+    *,
+    profile: str | None = None,
+    name: str = "run_python",
+    description: str | None = None,
+    **options: Any,
+) -> Callable[[str], str]:
+    def run_python(code: str) -> str:
+        return pool.run(code, profile=profile, **options).text
+
+    run_python.__name__ = name
+    run_python.__qualname__ = name
+    run_python.__annotations__ = {"code": str, "return": str}
+    run_python.__doc__ = description or _describe(profile, options)
+    return run_python
+
+
+def _describe(profile: str | None, options: dict[str, Any]) -> str:
+    lines = [
+        "Run Python code in an isolated sandbox and return what it printed.",
+        "",
+        "Args:",
+        "    code: Python source to execute. Print anything you need back; only",
+        "        standard output is returned, so prefer compact summaries.",
+        "",
+    ]
+    grants = []
+    if options.get("allow_read"):
+        grants.append("read " + ", ".join(str(p) for p in options["allow_read"]))
+    if options.get("allow_write"):
+        grants.append("write " + ", ".join(str(p) for p in options["allow_write"]))
+    if options.get("allow_network"):
+        grants.append("use the network")
+    if profile:
+        grants.append(f"use the permissions of profile {profile!r}")
+    if grants:
+        lines.append("The code may " + "; ".join(grants) + ". Everything else is denied.")
+    else:
+        lines.append(
+            "The code has no file, network or environment access beyond the standard library."
+        )
+    lines.append("Errors come back as the exception type, message, line and a hint.")
+    return "\n".join(lines)

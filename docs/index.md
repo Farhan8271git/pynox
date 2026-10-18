@@ -33,8 +33,9 @@ pynox --json report.py          # the same run as one JSON result, for automatio
 pynox --no-sandbox -O report.py # CPython's own command line, unrestricted
 ```
 
-For a model's code, the agent registers a tool that talks to `pynox pool`.
-The [agents guide](guides/agents.md) shows the whole thing in a dozen lines.
+For a model's code, `pynox.tool()` from the `pynox` package returns a
+function any agent framework registers as a tool; `pynox.run(code)` does the
+same from plain Python. The [agents guide](guides/agents.md) shows both.
 
 ## Why it exists
 

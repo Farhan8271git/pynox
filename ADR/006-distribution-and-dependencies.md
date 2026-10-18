@@ -25,10 +25,13 @@ directories. The bundle must always work on its own, copied into a container
 image, a read-only filesystem or a Lambda package, without a launcher,
 network or writable state.
 
-Planned, not shipped: a `pip install pynox` package delivering a small
+Build a wheel per CPython minor and platform from the bundle: the `pynox`
+package, the binary and the matching CPython, tagged `cp3XY-cp3XY-manylinux_2_28`
+or `musllinux_1_2`, with a console script. CI builds and installs it next to
+the bundle. Planned, not shipped: PyPI publication after the first release; a
 launcher that installs and selects bundles per Python version in the style of
-`uv python install`, with downloads manual by default and pinned to the
-Pynox release; official container images per Python version; a Lambda layer.
+`uv python install`, with downloads manual by default and pinned to the Pynox
+release; official container images per Python version; a Lambda layer.
 
 ## Alternatives considered
 

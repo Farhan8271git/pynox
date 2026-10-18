@@ -21,27 +21,43 @@ With Pynox the function keeps its shape and loses the risk: the code runs in
 a fresh process under a kernel policy you wrote, in about 5 ms, and the model
 reads back exactly what went wrong when it oversteps.
 
-## The tool
+## Install
 
-Start one pool for the life of your application and expose one function:
-
-```python
-from agent_tool import PynoxPool
-
-pool = PynoxPool(workers=2, preload=["json"])
-
-def run_python(code: str) -> str:
-    """Run Python written by the model. It may write to ./out and nothing else."""
-    result = pool.run(code, allow_write=["out"], timeout="10s", memory="256m")
-    return result.describe()
+```bash
+make wheel && pip install dist/pynox-*.whl     # from a checkout; PyPI follows the first release
 ```
 
-The signature the model sees is just `code`. Paths, network, time and memory
-are arguments of `pool.run` that your code supplies. If the model wants more
-access, it has to ask you, not the runtime.
+The wheel is tagged for one CPython minor and carries a matching CPython inside,
+so `pip install` in a 3.12 environment gives you a sandbox that runs 3.12 and can
+import that environment's packages through `package_dirs`.
 
-`PynoxPool` is a small client over the [pool protocol](pool.md), included in
-the repository and exercised by the test suite:
+## The tool
+
+```python
+import pynox
+
+run_python = pynox.tool(profile="analysis")
+```
+
+That is a plain function, `run_python(code: str) -> str`, with a docstring
+written for the model. Its only parameter is `code`; paths, network, time and
+memory come from the profile in `pynox.toml` or from keyword arguments you pass
+to `pynox.tool()`. If the model wants more access, it has to ask you.
+
+```python
+run_python = pynox.tool(allow_read=["data"], allow_write=["out"], timeout="10s", memory="256m")
+```
+
+Behind it is one pool for the process, started on first call and closed at
+exit. For several permission sets or explicit lifecycle, build pools yourself:
+
+```python
+analysis = pynox.Pool(workers=2, preload=["pandas"], config="pynox.toml")
+run_analysis = analysis.tool(profile="analysis")
+run_fetch = analysis.tool(profile="fetch")
+```
+
+The complete example in the repository, exercised by the test suite:
 
 ??? example "examples/agent_tool.py"
     ```python
@@ -50,7 +66,7 @@ the repository and exercised by the test suite:
 
 ## What the model gets back
 
-`describe()` turns the structured result into text:
+`pynox.run()` and `Pool.run()` return a `Result`; `tool()` returns its `text`:
 
 | Situation | Text returned |
 | --- | --- |
@@ -62,11 +78,12 @@ the repository and exercised by the test suite:
 The structured form is there when you want to branch on it instead:
 
 ```python
-result = pool.run(code)
+result = pynox.run(code)
 result.ok              # exit == 0 and no error
+result.text            # what tool() hands the model
 result.exit            # Python exit status; 124 timeout, 125 setup failure
 result.error           # None or {"type", "message", "file", "line", "path", "hint"}
-result.stdout, result.stderr, result.truncated, result.duration_ms
+result.stdout, result.stderr, result.truncated, result.duration_ms, result.policy
 ```
 
 Error locations use the request's `name` (default `agent.py`), so a model that
@@ -92,41 +109,42 @@ it: it is controlled automation, not a boundary for hostile code.
 
 ## Registering with a framework
 
-Any framework that can call a Python function can call `run_python`. The
-snippets below show the shape; only `examples/agent_tool.py` and
-`examples/monty_bridge.py` run in Pynox's test suite.
-
-=== "Plain function"
-    ```python
-    tools = {"run_python": run_python}
-    # In your loop: when the model requests run_python, call it with the
-    # code argument and append the returned text as the tool result.
-    ```
+Any framework that accepts a typed, documented Python function accepts
+`pynox.tool()`. The snippets show the shape; `examples/agent_tool.py` and
+`examples/monty_bridge.py` run in Pynox's test suite, the framework lines do
+not yet.
 
 === "Pydantic AI"
     ```python
     from pydantic_ai import Agent
+    import pynox
 
-    agent = Agent("anthropic:claude-sonnet-4-5")
+    agent = Agent("anthropic:claude-sonnet-4-5", tools=[pynox.tool(profile="analysis")])
+    ```
 
-    @agent.tool_plain
-    def run_python(code: str) -> str:
-        """Run Python code. Only ./out is writable."""
-        return pool.run(code, allow_write=["out"], timeout="10s").describe()
+=== "Strands"
+    ```python
+    from strands import Agent, tool
+    import pynox
+
+    agent = Agent(tools=[tool(pynox.tool(profile="analysis"))])
     ```
 
 === "smolagents"
     ```python
-    from smolagents import tool
+    from smolagents import CodeAgent, tool
+    import pynox
 
-    @tool
-    def run_python(code: str) -> str:
-        """Run Python code in a sandbox.
+    agent = CodeAgent(tools=[tool(pynox.tool(profile="analysis"))], model=model)
+    ```
 
-        Args:
-            code: Python source to execute. Only ./out is writable.
-        """
-        return pool.run(code, allow_write=["out"], timeout="10s").describe()
+=== "Your own loop"
+    ```python
+    import pynox
+
+    tools = {"run_python": pynox.tool(profile="analysis")}
+    # When the model calls run_python, pass its `code` argument and append
+    # the returned text as the tool result.
     ```
 
 For agents whose glue code should itself run isolated, pair Pynox with

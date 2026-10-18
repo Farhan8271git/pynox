@@ -104,20 +104,23 @@ costs money per hour and ships your data out.
 
 Pynox is the third place. The model's code runs locally, under the policy you
 wrote, in about 5 ms. When it oversteps, the model gets the error text and
-corrects itself on the next turn. [`examples/agent_tool.py`](examples/agent_tool.py)
-turns the pool into a function you register as a tool in any framework:
+corrects itself on the next turn. The `pynox` Python package makes that one
+line in any framework:
 
 ```python
-from agent_tool import PynoxPool
+import pynox
 
-pool = PynoxPool(workers=2)
-
-def run_python(code: str) -> str:
-    """Run Python written by the model. It can write to ./out and nothing else."""
-    return pool.run(code, allow_write=["out"], timeout="10s").describe()
+agent = Agent("anthropic:claude-sonnet-4-5", tools=[pynox.tool(profile="analysis")])
 ```
 
+`pynox.tool()` returns a plain `run_python(code) -> str` function with a
+docstring written for the model. Pydantic AI takes it as is; Strands and
+smolagents wrap it with their `tool` decorator; Monty takes it as an external
+function. Permissions come from the profile in `pynox.toml` or from keyword
+arguments, never from the model:
+
 ```python
+>>> run_python = pynox.tool(allow_write=["out"], timeout="10s")
 >>> print(run_python("print(sum(range(10)))"))
 45
 >>> print(run_python("open('/etc/passwd').read()"))
@@ -126,11 +129,16 @@ at agent.py:1
 For files, grant the specific path with --allow-read/--allow-write. ...
 ```
 
-Each call forks a fresh process from a warm CPython template, so preloaded
-libraries cost nothing per call and nothing leaks between calls. The protocol
-underneath is JSON Lines over `pynox pool`, usable from any language. The
-next release packages this as `pip install pynox` with a one-line
-`pynox.tool()`; until then, copy the example file.
+`pynox.run(code)` gives the same result as an object with `ok`, `text`,
+`stdout` and a structured `error`. Each call forks a fresh process from a warm
+CPython template, so preloaded libraries cost nothing per call and nothing
+leaks between calls. The package is a thin client of `pynox pool`, a JSON
+Lines protocol you can drive from any language.
+
+The wheel embeds the binary and a CPython of the **same minor version as your
+environment**, so the sandbox imports the packages you already installed.
+Build it with `make wheel` and `pip install dist/pynox-*.whl`; PyPI
+publication follows the first release.
 
 Read the [agents guide](docs/guides/agents.md) for permissions, results and
 framework registration, the [pool protocol](docs/guides/pool.md) for every
@@ -202,8 +210,9 @@ Full documentation: **[ferrumio.github.io/pynox](https://ferrumio.github.io/pyno
 
 Try your scripts, report what surprises you, and bring real workloads to
 measure. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup and checks;
-`make test` runs the Rust and Python suites. Rust lives in `src/`, embedded
-Python in `python/pynox/`.
+`make test` runs the Rust and Python suites. Rust lives in `src/`, the
+`pynox` Python package in `python/pynox/` and the embedded runtime helpers in
+`python/pynox/_embedded/`.
 
 ## License
 

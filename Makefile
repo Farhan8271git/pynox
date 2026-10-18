@@ -1,4 +1,4 @@
-.PHONY: setup build check test test-rust docs bundle clean distclean
+.PHONY: setup build check test test-rust docs bundle wheel clean distclean
 PYNOX_PYTHON_VERSION ?= $(shell cat .python-version)
 export PYNOX_PYTHON_VERSION
 UV_PYTHON ?= $(or $(PYO3_PYTHON),$(PYNOX_PYTHON_VERSION))
@@ -23,6 +23,8 @@ docs:
 	uv run --locked --group docs zensical build
 bundle: build
 	uv run --locked python scripts/package.py
+wheel: bundle
+	uv run --locked python scripts/wheel.py
 clean:
 	rm -rf -- target dist site docs/adr .cache .pytest_cache .ruff_cache
 	find python tests scripts examples -type d -name __pycache__ -prune -exec rm -rf -- {} +

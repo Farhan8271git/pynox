@@ -31,16 +31,18 @@ The source layout follows pydynox:
 
 ```text
 src/              Rust runtime, process control, sandbox and native adapters
-python/pynox/     Embedded Python bootstrap and compatibility helpers
+python/pynox/     The `pynox` Python package: Pool, run, tool
+python/pynox/_embedded/  Bootstrap and optimization code compiled into the binary
 tests/rust/       Rust unit tests
 tests/test_*.py   Python integration tests
 scripts/          Development, packaging and validation tools
 examples/         User-facing Python examples
 ```
 
-`build.rs` compiles the Python helpers with the linked CPython and embeds the
-bytecode; the executable does not need the source checkout to run. `python/pynox/` holds
-internal runtime sources, not a separately installed Python package.
+`build.rs` compiles `python/pynox/_embedded/*.py` with the linked CPython and
+embeds the bytecode; the executable does not need the source checkout to run.
+The rest of `python/pynox/` is the installable package; `make wheel` packs it
+with the bundle and `scripts/check_wheel.py` installs and exercises the result.
 
 Preserve ordinary Python APIs and document every behavior difference. Keep
 framework dependencies in optional test groups; never add them to the shipped

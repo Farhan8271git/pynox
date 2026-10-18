@@ -33,6 +33,16 @@ still needs Landlock ABI >= 3 and the kernel interfaces described in the
 [sandbox contract](sandbox.md). An older userspace on a recent kernel is valid;
 an old kernel does not gain sandbox support from a manylinux build.
 
+## Python package
+
+`make wheel` builds `dist/pynox-<version>-cp3XY-cp3XY-manylinux_2_28_<arch>.whl`
+(or `musllinux_1_2`) from the bundle: the `pynox` package, the binary and the
+matching CPython. The tag binds the wheel to one CPython minor on purpose:
+`pip install pynox` in a 3.12 environment yields a sandbox that runs 3.12 and
+can import that environment's packages. The wheel also installs a `pynox`
+console script that hands the command line to the binary. Wheels are built by
+CI next to the bundles; PyPI publication follows the first release.
+
 ## Building from source
 
 Use `make build PYNOX_PYTHON_VERSION=3.14` to select a supported minor, or an

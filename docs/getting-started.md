@@ -143,17 +143,25 @@ pynox pool --workers=2
 {"id": 1, "exit": 0, "stdout": "45\n", "stderr": "", "error": null, "duration_ms": 4, "...": "..."}
 ```
 
-From Python, `examples/agent_tool.py` wraps the protocol:
-
-```python
-from agent_tool import PynoxPool
-
-with PynoxPool(workers=2) as pool:
-    print(pool.run("print(sum(range(10)))").describe())
-```
+From Python, the `pynox` package wraps the protocol. Install the wheel for
+your environment's CPython version, built from the checkout:
 
 ```bash
-PYNOX_BIN=$PWD/target/release/pynox uv run python examples/agent_tool.py
+make wheel
+pip install dist/pynox-*.whl
+```
+
+```python
+import pynox
+
+print(pynox.run("print(sum(range(10)))").text)      # 45
+run_python = pynox.tool(allow_write=["out"])          # a function for your agent framework
+```
+
+Without installing, point the package at a local build:
+
+```bash
+PYNOX_BIN=$PWD/target/release/pynox PYTHONPATH=python uv run python examples/agent_tool.py
 ```
 
 ## Plain Python

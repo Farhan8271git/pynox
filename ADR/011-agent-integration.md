@@ -23,13 +23,17 @@ from the pool's configuration, within the operator's `[pool.limits]`
 (ADR 012); the model only supplies code. Results carry `exit`, captured output, a structured error with type,
 message, location and hint, duration and the effective policy.
 
-Ship tested, framework-agnostic examples as part of the product:
-`examples/agent_tool.py` wraps the pool as a tool any framework can register,
-and `examples/monty_bridge.py` shows Monty orchestrating with Pynox executing
-the heavy work. Both run in the test suite. Next contracts, in order: a
-`pip install pynox` package delivering the binary, explicit persistent
-sessions in the pool, a tool bridge from sandboxed code back to the host, and
-network allowlists by domain.
+Ship a Python package, `pynox`, as the integration surface: `pynox.run(code)`
+returns a `Result`; `pynox.tool(profile=...)` returns a typed, documented
+`run_python(code) -> str` that every agent framework accepts unchanged; `Pool`
+gives explicit lifecycle. The package is a thin client of the pool protocol and
+contains no agent loop, prompt or framework adapter, so Pynox serves
+frameworks instead of competing with them. Its wheel is tagged per CPython
+minor and embeds a matching CPython, so the sandbox imports the packages of
+the environment that installed it. `examples/agent_tool.py` and
+`examples/monty_bridge.py` use it and run in the test suite. Next contracts,
+in order: explicit persistent sessions in the pool, a tool bridge from
+sandboxed code back to the host, and network allowlists by domain.
 
 ## Alternatives considered
 

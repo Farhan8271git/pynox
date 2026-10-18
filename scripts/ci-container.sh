@@ -22,6 +22,8 @@ make check
 make test PYTEST_ARGS="--junitxml=dist/tests-${PYNOX_PYTHON_VERSION}-linux-${PYNOX_LINUX_FAMILY}.xml"
 make bundle
 uv run --locked python scripts/check_install.py
-cp dist/*.tar.gz dist/*.sha256 dist/*.xml /artifacts/
+make wheel
+uv run --locked python scripts/check_wheel.py
+cp dist/*.tar.gz dist/*.whl dist/*.sha256 dist/*.xml /artifacts/
 # The host can clean its artifacts after a root-owned container build.
 chown "$PYNOX_OUTPUT_OWNER" /artifacts/*

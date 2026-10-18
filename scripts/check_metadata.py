@@ -36,6 +36,8 @@ def main():
     }
     assert all(re.search(r"@sha256:[a-f0-9]{64}$", image) for image in images.values())
     assert project["version"] == version
+    package = (ROOT / "python/pynox/__init__.py").read_text()
+    assert f'__version__ = "{version}"' in package, "python/pynox/__init__.py version"
     assert f"PYNOX_VERSION:-{version}" in (ROOT / "scripts/install.sh").read_text()
     assert f"## {version}" in (ROOT / "CHANGELOG.md").read_text()
     if args.tag:
