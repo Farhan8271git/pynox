@@ -230,10 +230,14 @@ Full documentation: **[ferrumio.github.io/pynox](https://ferrumio.github.io/pyno
 ## Contributing
 
 Try your scripts, report what surprises you, and bring real workloads to
-measure. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup and checks;
-`make test` runs the Rust and Python suites. Rust lives in `src/`, the
-`pynox` Python package in `python/pynox/` and the embedded runtime helpers in
-`python/pynox/_embedded/`.
+measure. The [roadmap](https://github.com/ferrumio/pynox/issues/33) shows what
+comes next, and [good first issues](https://github.com/ferrumio/pynox/labels/good%20first%20issue)
+are scoped to be picked up in an afternoon, by you or by your coding agent.
+Comment on an issue before you start so nobody duplicates work.
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers setup and checks; `make test` runs the
+Rust and Python suites. Rust lives in `src/`, the `pynox` Python package in
+`python/pynox/` and the embedded runtime helpers in `python/pynox/_embedded/`.
 
 ## License
 
