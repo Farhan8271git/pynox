@@ -47,9 +47,9 @@ pynox doctor
  "runtime_supported": true, "sandbox_supported": true}
 ```
 
-`sandbox_supported` is false on kernels without Landlock ABI 3. The runtime
-still works; `pynox sandbox` and `pynox pool` refuse to run, they never fall
-back to unrestricted execution.
+`sandbox_supported` is false on kernels without Landlock ABI 3. There,
+sandboxed runs and the pool refuse to start and point you at `--no-sandbox`;
+they never fall back to unrestricted execution silently.
 
 ## Run a script
 
@@ -60,47 +60,64 @@ name = "Pynox"
 print(f"Hello from {name}!")
 ```
 
-Run it like Python. Options, `-c`, `-m`, output and exit codes are CPython's:
-
 ```bash
 pynox hello.py
 # Hello from Pynox!
-pynox -c 'import sys; print(sys.version)'
 ```
 
-## Run it sandboxed
-
-```bash
-pynox sandbox hello.py
-```
-
-```json
-{"exit": 0, "stdout": "Hello from Pynox!\n", "stderr": "", "error": null,
- "duration_ms": 9, "policy": {"allow_read": [], "allow_write": [], "network": "deny", "...": "..."}}
-```
-
-Now a script that reads outside its grants:
+It ran inside the sandbox, with Python's output and exit code. The only thing
+it could read was its own directory and the standard library. Try to read
+outside it:
 
 ```bash
 echo "print(open('/etc/hostname').read())" > probe.py
-pynox sandbox probe.py
+pynox probe.py
 ```
 
-```json
-{"exit": 1, "error": {"type": "PermissionError",
-  "message": "[Errno 13] Permission denied: '/etc/hostname'",
-  "file": "/home/you/probe.py", "line": 1, "path": "/etc/hostname",
-  "hint": "For files, grant the specific path with --allow-read/--allow-write. ..."}}
+```text
+Traceback (most recent call last):
+  File "/home/you/probe.py", line 1, in <module>
+    print(open('/etc/hostname').read())
+PermissionError: [Errno 13] Permission denied: '/etc/hostname'
+pynox: For files, grant the specific path with --allow-read/--allow-write. ...
 ```
 
 Grants are explicit and separate for reading and writing:
 
 ```bash
-pynox sandbox --allow-read=/etc/hostname probe.py
-pynox sandbox --allow-read=data --allow-write=out --timeout=5s job.py
+pynox --allow-read=/etc/hostname probe.py
+pynox --allow-read=data --allow-write=out --timeout=5s job.py
+pynox -m pytest -q            # the current directory is readable for -m
 ```
 
-See [commands](usage.md) for every option and the [sandbox contract](sandbox.md)
+State a project's permissions once in `pynox.toml` next to where you run:
+
+```toml
+[permissions]
+allow_read = ["data"]
+allow_write = ["out"]
+```
+
+Need the plain interpreter, the REPL or an option the sandbox does not map?
+
+```bash
+pynox --no-sandbox -c 'import sys; print(sys.version)'
+pynox --no-sandbox -O app.py
+```
+
+## Get a JSON result
+
+```bash
+pynox --json hello.py
+```
+
+```json
+{"exit": 0, "stdout": "Hello from Pynox!\n", "stderr": "", "error": null, "duration_ms": 9,
+ "policy": {"allow_read": [], "implicit_read": ["/home/you"], "network": "deny", "...": "..."}}
+```
+
+Failures carry a structured `error` with type, message, file, line and hint.
+See [commands](usage.md) for every flag and the [sandbox contract](sandbox.md)
 for what is and is not enforced.
 
 ## Start a pool

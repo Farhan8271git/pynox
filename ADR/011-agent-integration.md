@@ -18,8 +18,9 @@ which is precisely what Pynox provides.
 
 Pool requests accept `code` with an optional `name` instead of `script`.
 Inline code grants no file access and reports its errors against the given
-name. Requests choose permissions and limits per call; the model only supplies
-code. Results carry `exit`, captured output, a structured error with type,
+name. Requests choose permissions and limits per call, or name a `profile`
+from the pool's configuration, within the operator's `[pool.limits]`
+(ADR 012); the model only supplies code. Results carry `exit`, captured output, a structured error with type,
 message, location and hint, duration and the effective policy.
 
 Ship tested, framework-agnostic examples as part of the product:

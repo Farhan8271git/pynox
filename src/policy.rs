@@ -1,63 +1,295 @@
+//! Command-line options, task policy and their validation.
+//!
+//! Pynox's own flags are long options that CPython never uses, so the command
+//! line splits cleanly: Pynox flags first, then CPython's command line.
 use anyhow::{bail, Context, Result};
-use clap::Parser;
 use serde::{Deserialize, Serialize};
-use std::{ffi::OsString, path::PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 #[cfg(test)]
 #[path = "../tests/rust/policy.rs"]
 mod tests;
 
-#[derive(Parser, Debug)]
-#[command(
-    version = crate::runtime::cli_version(),
-    name = "pynox sandbox",
-    about = "Run one Python script with explicit permissions and limits; prints a JSON result",
-    after_help = "Other commands:\n  pynox [PYTHON_OPTIONS] SCRIPT [ARGS]  Ordinary Python mode, no sandbox\n  pynox pool [OPTIONS]                   Sandboxed JSONL task pool\n  pynox doctor                           Check runtime and kernel capabilities"
-)]
-pub struct Cli {
-    /// Allow IPv4/IPv6 networking. Host Unix sockets remain denied.
-    #[arg(long, action = clap::ArgAction::Set, num_args = 0..=1, require_equals = true, default_missing_value = "true", default_value = "false")]
-    pub allow_network: bool,
-    /// File or directory to make readable (repeat this flag for multiple paths).
-    #[arg(long, value_name = "PATH")]
+pub const DEFAULT_TIMEOUT: &str = "5s";
+pub const DEFAULT_MEMORY: &str = "512m";
+pub const DEFAULT_MAX_OUTPUT: u64 = 65_536;
+
+/// Permissions and limits before resolution. Lists accumulate, scalars are
+/// optional so that layers (config, profile, flags, request) can be overlaid.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Grants {
+    #[serde(default)]
     pub allow_read: Vec<PathBuf>,
-    /// Existing file or directory to make writable; does not grant read access.
-    #[arg(long, value_name = "PATH")]
+    #[serde(default)]
     pub allow_write: Vec<PathBuf>,
-    /// Environment variable to pass to Python (repeatable).
-    #[arg(long, value_name = "NAME")]
+    #[serde(default)]
     pub allow_env: Vec<String>,
-    /// Existing package directory to import from; grants read access to its contents.
-    #[arg(long, value_name = "PATH")]
-    pub package_dir: Vec<PathBuf>,
-    /// Wall-clock limit: e.g. 500ms, 5s, 1m.
-    #[arg(long, default_value = "5s", value_parser = parse_duration)]
-    pub timeout: u64,
-    /// Address-space limit: e.g. 512m, 2g.
-    #[arg(long, default_value = "512m", value_parser = parse_memory)]
-    pub memory: u64,
-    /// Maximum captured bytes per stream; excess output is drained and discarded.
-    #[arg(long, default_value = "65536", value_parser = clap::value_parser!(u64).range(1..=16_777_216))]
-    pub max_output: u64,
-    /// Python script followed by its arguments; only the script is implicitly readable.
-    #[arg(required = true, num_args = 1.., trailing_var_arg = true, value_names = ["SCRIPT", "ARGS"])]
-    pub command: Vec<OsString>,
+    #[serde(default)]
+    pub package_dirs: Vec<PathBuf>,
+    #[serde(default)]
+    pub allow_network: Option<bool>,
+    #[serde(default)]
+    pub timeout: Option<String>,
+    #[serde(default)]
+    pub memory: Option<String>,
+    #[serde(default)]
+    pub max_output: Option<u64>,
 }
 
+impl Grants {
+    /// Apply `layer` on top of `self`: lists concatenate, set scalars override.
+    pub fn overlay(mut self, layer: &Grants) -> Grants {
+        self.allow_read.extend(layer.allow_read.iter().cloned());
+        self.allow_write.extend(layer.allow_write.iter().cloned());
+        self.allow_env.extend(layer.allow_env.iter().cloned());
+        self.package_dirs.extend(layer.package_dirs.iter().cloned());
+        self.allow_network = layer.allow_network.or(self.allow_network);
+        self.timeout = layer.timeout.clone().or(self.timeout);
+        self.memory = layer.memory.clone().or(self.memory);
+        self.max_output = layer.max_output.or(self.max_output);
+        self
+    }
+
+    /// Make relative paths relative to `base` (the configuration file's directory).
+    pub fn anchored(mut self, base: &Path) -> Grants {
+        for list in [
+            &mut self.allow_read,
+            &mut self.allow_write,
+            &mut self.package_dirs,
+        ] {
+            for path in list.iter_mut() {
+                if path.is_relative() {
+                    *path = base.join(&*path);
+                }
+            }
+        }
+        self
+    }
+}
+
+/// What Pynox was asked to run, after its own flags.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Program {
+    Script {
+        path: OsString,
+        args: Vec<String>,
+    },
+    Code {
+        source: String,
+        /// Filename in tracebacks and errors.
+        label: String,
+        /// `sys.argv[0]`; `-c` for the command line, the label for pool requests.
+        argv0: String,
+        args: Vec<String>,
+    },
+    Module {
+        name: String,
+        args: Vec<String>,
+    },
+}
+
+impl Program {
+    /// Interpret CPython's command line for sandboxed execution. Only the
+    /// program selection is supported; interpreter options need `--no-sandbox`.
+    pub fn from_python_args(args: &[OsString]) -> Result<Program> {
+        let text = |arg: &OsString| -> Result<String> {
+            arg.to_str()
+                .map(str::to_owned)
+                .context("Arguments must be UTF-8")
+        };
+        let mut index = 0;
+        while let Some(arg) = args.get(index) {
+            let flag = arg.to_string_lossy();
+            if !flag.starts_with('-') || flag == "-" || flag.starts_with("--") {
+                break;
+            }
+            if flag == "-c" || flag == "-m" || flag.starts_with("-c") || flag.starts_with("-m") {
+                break;
+            }
+            // Isolation and buffering options describe what the sandbox does already.
+            if flag[1..].chars().all(|c| "uBEsISq".contains(c)) {
+                index += 1;
+                continue;
+            }
+            bail!("CPython option {flag} is not available in the sandbox; use --no-sandbox");
+        }
+        let Some(first) = args.get(index) else {
+            bail!(
+                "Nothing to run: give a script, -c CODE or -m MODULE (the REPL needs --no-sandbox)"
+            );
+        };
+        let first_text = first.to_string_lossy();
+        let rest = |from: usize| -> Result<Vec<String>> { args[from..].iter().map(text).collect() };
+        if first_text == "-" {
+            bail!("Reading the program from stdin needs --no-sandbox");
+        }
+        if let Some(inline) = first_text.strip_prefix("-c") {
+            let (source, from) = if inline.is_empty() {
+                let code = args.get(index + 1).context("-c needs the code to run")?;
+                (text(code)?, index + 2)
+            } else {
+                (inline.to_owned(), index + 1)
+            };
+            return Ok(Program::Code {
+                source,
+                label: "<string>".into(),
+                argv0: "-c".into(),
+                args: rest(from)?,
+            });
+        }
+        if let Some(inline) = first_text.strip_prefix("-m") {
+            let (name, from) = if inline.is_empty() {
+                let module = args.get(index + 1).context("-m needs the module to run")?;
+                (text(module)?, index + 2)
+            } else {
+                (inline.to_owned(), index + 1)
+            };
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+            {
+                bail!("Invalid module name {name:?}");
+            }
+            return Ok(Program::Module {
+                name,
+                args: rest(from)?,
+            });
+        }
+        Ok(Program::Script {
+            path: first.clone(),
+            args: rest(index + 1)?,
+        })
+    }
+}
+
+/// Pynox's own command line, parsed before CPython's.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Invocation {
+    pub grants: Grants,
+    pub json: bool,
+    pub no_sandbox: bool,
+    pub config: Option<PathBuf>,
+    pub profile: Option<String>,
+    /// Everything after Pynox's flags: CPython's command line.
+    pub python_args: Vec<OsString>,
+}
+
+const FLAGS_WITH_VALUE: [&str; 10] = [
+    "--allow-read",
+    "--allow-write",
+    "--allow-env",
+    "--package-dir",
+    "--timeout",
+    "--memory",
+    "--max-output",
+    "--config",
+    "--profile",
+    "--allow-network",
+];
+
+pub fn parse_invocation(args: &[OsString]) -> Result<Invocation> {
+    let mut invocation = Invocation::default();
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        let flag = arg.to_string_lossy().into_owned();
+        if flag == "--" {
+            index += 1;
+            break;
+        }
+        if !flag.starts_with("--") {
+            break;
+        }
+        let (name, inline) = match flag.split_once('=') {
+            Some((name, value)) => (name.to_owned(), Some(value.to_owned())),
+            None => (flag.clone(), None),
+        };
+        match name.as_str() {
+            "--json" => invocation.json = true,
+            "--no-sandbox" => invocation.no_sandbox = true,
+            "--allow-network" => {
+                invocation.grants.allow_network = Some(match inline.as_deref() {
+                    None | Some("true") => true,
+                    Some("false") => false,
+                    Some(other) => bail!("--allow-network accepts true or false, not {other:?}"),
+                });
+            }
+            name if FLAGS_WITH_VALUE.contains(&name) => {
+                let value = match inline {
+                    Some(value) => value,
+                    None => {
+                        index += 1;
+                        args.get(index)
+                            .map(|v| v.to_string_lossy().into_owned())
+                            .with_context(|| format!("{name} needs a value"))?
+                    }
+                };
+                if value.is_empty() {
+                    bail!("{name} needs a value");
+                }
+                match name {
+                    "--allow-read" => invocation.grants.allow_read.push(value.into()),
+                    "--allow-write" => invocation.grants.allow_write.push(value.into()),
+                    "--allow-env" => invocation.grants.allow_env.push(value),
+                    "--package-dir" => invocation.grants.package_dirs.push(value.into()),
+                    "--timeout" => {
+                        parse_duration(&value).map_err(|e| anyhow::anyhow!(e))?;
+                        invocation.grants.timeout = Some(value);
+                    }
+                    "--memory" => {
+                        parse_memory(&value).map_err(|e| anyhow::anyhow!(e))?;
+                        invocation.grants.memory = Some(value);
+                    }
+                    "--max-output" => {
+                        invocation.grants.max_output =
+                            Some(value.parse().context("--max-output must be a number")?);
+                    }
+                    "--config" => invocation.config = Some(value.into()),
+                    "--profile" => invocation.profile = Some(value),
+                    _ => unreachable!(),
+                }
+            }
+            // Unknown long options belong to CPython (--help, --version, ...).
+            _ => break,
+        }
+        index += 1;
+    }
+    invocation.python_args = args[index..].to_vec();
+    if invocation.no_sandbox
+        && (invocation.json
+            || invocation.profile.is_some()
+            || invocation.grants != Grants::default())
+    {
+        bail!("--no-sandbox cannot be combined with permissions, --profile or --json");
+    }
+    Ok(invocation)
+}
+
+/// Resolved, validated policy for one task. Serialized to the worker.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Policy {
     pub allow_network: bool,
-    /// Script path, or the display name of inline `source` for tracebacks.
+    /// Script path, or the label of inline code or the module name.
     pub script: PathBuf,
-    /// Inline program text for pool requests that carry `code` instead of a file.
+    pub argv0: String,
     pub source: Option<String>,
+    pub module: Option<String>,
     pub args: Vec<String>,
     pub allow_read: Vec<PathBuf>,
     pub allow_write: Vec<PathBuf>,
+    /// Granted without a flag: the script's directory, or the current directory for `-m`.
+    pub implicit_read: Vec<PathBuf>,
     pub package_dirs: Vec<PathBuf>,
+    pub allow_env: Vec<String>,
     pub timeout_ms: u64,
     pub memory_bytes: u64,
     pub max_output: usize,
+    /// Capture output for a JSON result instead of passing it through.
+    pub capture: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -95,30 +327,36 @@ pub fn python_info() -> PythonInfo {
     info
 }
 
+pub fn resolve_paths(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    paths
+        .iter()
+        .map(|path| {
+            let path = path
+                .canonicalize()
+                .with_context(|| format!("Permission path must exist: {}", path.display()))?;
+            let metadata = path.metadata()?;
+            if !metadata.is_file() && !metadata.is_dir() {
+                bail!(
+                    "Permission paths must be regular files or directories: {}",
+                    path.display()
+                );
+            }
+            Ok(path)
+        })
+        .collect()
+}
+
 impl Policy {
-    /// Build a task policy. With `source`, the command's first element is only a
-    /// display name for the inline program and grants no file access.
-    pub fn from_cli(cli: &Cli, source: Option<String>) -> Result<Self> {
-        if !(1..=16_777_216).contains(&cli.max_output) {
+    pub fn new(grants: &Grants, program: Program, capture: bool) -> Result<Self> {
+        let max_output = grants.max_output.unwrap_or(DEFAULT_MAX_OUTPUT);
+        if !(1..=16_777_216).contains(&max_output) {
             bail!("max_output must be between 1 and 16777216 bytes");
         }
-        let (script, args) = cli.command.split_first().context("Script is required")?;
-        let script = if source.is_some() {
-            let name = script.to_str().context("Code name must be UTF-8")?;
-            if name.is_empty() || name.contains(['\0', '/']) {
-                bail!("Code name must be a non-empty label without path separators");
-            }
-            PathBuf::from(name)
-        } else {
-            let script = PathBuf::from(script)
-                .canonicalize()
-                .context("Cannot resolve script")?;
-            if !script.is_file() {
-                bail!("Script must be a regular file");
-            }
-            script
-        };
-        for name in &cli.allow_env {
+        let timeout_ms = parse_duration(grants.timeout.as_deref().unwrap_or(DEFAULT_TIMEOUT))
+            .map_err(|e| anyhow::anyhow!(e))?;
+        let memory_bytes = parse_memory(grants.memory.as_deref().unwrap_or(DEFAULT_MEMORY))
+            .map_err(|e| anyhow::anyhow!(e))?;
+        for name in &grants.allow_env {
             if name.is_empty() || name.contains(['=', '\0']) {
                 bail!("Invalid environment variable name");
             }
@@ -133,46 +371,72 @@ impl Policy {
                 bail!("Loader variable {name} cannot be forwarded");
             }
         }
-        let resolve = |paths: &[PathBuf]| -> Result<Vec<PathBuf>> {
-            paths
-                .iter()
-                .map(|path| {
-                    let path = path.canonicalize().with_context(|| {
-                        format!("Permission path must exist: {}", path.display())
-                    })?;
-                    let metadata = path.metadata()?;
-                    if !metadata.is_file() && !metadata.is_dir() {
-                        bail!(
-                            "Permission paths must be regular files or directories: {}",
-                            path.display()
-                        );
-                    }
-                    Ok(path)
-                })
-                .collect()
-        };
-        let package_dirs = resolve(&cli.package_dir)?;
+        let package_dirs = resolve_paths(&grants.package_dirs)?;
         if package_dirs.iter().any(|path| !path.is_dir()) {
             bail!("Package paths must be directories");
         }
+        let (script, argv0, source, module, args, implicit_read) = match program {
+            Program::Script { path, args } => {
+                let script = PathBuf::from(&path)
+                    .canonicalize()
+                    .with_context(|| format!("Cannot resolve script {}", path.to_string_lossy()))?;
+                if !script.is_file() {
+                    bail!("Script must be a regular file");
+                }
+                let argv0 = script
+                    .to_str()
+                    .context("Script path must be UTF-8")?
+                    .to_owned();
+                let directory = script.parent().map(Path::to_path_buf).into_iter().collect();
+                (script, argv0, None, None, args, directory)
+            }
+            Program::Code {
+                source,
+                label,
+                argv0,
+                args,
+            } => {
+                if label.is_empty() || label.contains(['\0', '/']) {
+                    bail!("Code name must be a non-empty label without path separators");
+                }
+                (
+                    PathBuf::from(&label),
+                    argv0,
+                    Some(source),
+                    None,
+                    args,
+                    Vec::new(),
+                )
+            }
+            Program::Module { name, args } => {
+                let cwd =
+                    std::env::current_dir().context("Cannot resolve the current directory")?;
+                (
+                    PathBuf::from(&name),
+                    name.clone(),
+                    None,
+                    Some(name),
+                    args,
+                    vec![cwd],
+                )
+            }
+        };
         Ok(Self {
-            allow_network: cli.allow_network,
+            allow_network: grants.allow_network.unwrap_or(false),
             script,
+            argv0,
             source,
-            args: args
-                .iter()
-                .map(|arg| {
-                    arg.to_str()
-                        .context("Script arguments must be UTF-8")
-                        .map(str::to_owned)
-                })
-                .collect::<Result<_>>()?,
-            allow_read: resolve(&cli.allow_read)?,
-            allow_write: resolve(&cli.allow_write)?,
+            module,
+            args,
+            allow_read: resolve_paths(&grants.allow_read)?,
+            allow_write: resolve_paths(&grants.allow_write)?,
+            implicit_read,
             package_dirs,
-            timeout_ms: cli.timeout,
-            memory_bytes: cli.memory,
-            max_output: cli.max_output as usize,
+            allow_env: grants.allow_env.clone(),
+            timeout_ms,
+            memory_bytes,
+            max_output: max_output as usize,
+            capture,
         })
     }
 }

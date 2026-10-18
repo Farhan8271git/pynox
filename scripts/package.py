@@ -120,12 +120,14 @@ def main():
         loaded_libraries = "import pathlib; libraries = pathlib.Path('/proc/self/maps').read_text()"
         run(
             str(relocated),
+            "--no-sandbox",
             "-I",
             "-c",
             loaded_libraries + f"; assert {str(moved / 'python/lib/libpython')!r} in libraries",
         )
         run(
             str(relocated),
+            "--no-sandbox",
             "-I",
             "-c",
             f"import ssl, sqlite3, zlib, sys; assert '.'.join(map(str, sys.version_info[:2])) == {major_minor!r}",
@@ -143,10 +145,12 @@ def main():
             "else:\n"
             "    raise AssertionError('sandbox absent')\n"
         )
-        report = json.loads(run(str(relocated), "sandbox", str(script)))
+        report = json.loads(run(str(relocated), "--json", str(script)))
         assert report["exit"] == 0 and report["stdout"] == "sandbox enforced\n", report
-        # The default mode is plain Python: the same script must read the file.
-        plain = subprocess.run([relocated, script], capture_output=True, text=True)
+        # The sandbox is the default; --no-sandbox is plain Python and reads the file.
+        default = subprocess.run([relocated, script], capture_output=True, text=True)
+        assert default.returncode == 0 and default.stdout == "sandbox enforced\n", default
+        plain = subprocess.run([relocated, "--no-sandbox", script], capture_output=True, text=True)
         assert plain.returncode == 1 and "sandbox absent" in plain.stderr, plain
         archive = output / f"{name}.tar.gz"
         epoch = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))

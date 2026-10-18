@@ -8,7 +8,7 @@ fn request(mut fields: Value) -> Request {
 
 #[test]
 fn minimal_request_has_no_optional_capabilities() {
-    let job = request(json!({})).job().unwrap();
+    let job = request(json!({})).job(None).unwrap();
     assert!(!job.policy.allow_network);
     assert!(job.policy.allow_read.is_empty());
     assert!(job.policy.allow_write.is_empty());
@@ -40,12 +40,12 @@ fn unknown_fields_and_mistyped_options_are_rejected() {
 #[test]
 fn json_requests_obey_output_limit_boundaries() {
     for limit in [0, 16_777_217, u64::MAX] {
-        assert!(request(json!({"max_output": limit})).job().is_err());
+        assert!(request(json!({"max_output": limit})).job(None).is_err());
     }
     for limit in [1, 16_777_216] {
         assert_eq!(
             request(json!({"max_output": limit}))
-                .job()
+                .job(None)
                 .unwrap()
                 .policy
                 .max_output,
@@ -61,12 +61,12 @@ fn environment_is_validated_and_kept_per_request() {
         json!({"LD_PRELOAD": "/tmp/inject.so"}),
         json!({"KEY=value": "secret"}),
     ] {
-        assert!(request(json!({"env": env})).job().is_err());
+        assert!(request(json!({"env": env})).job(None).is_err());
     }
     let first = request(json!({"env": {"API_KEY": "first-only"}}))
-        .job()
+        .job(None)
         .unwrap();
-    let second = request(json!({})).job().unwrap();
+    let second = request(json!({})).job(None).unwrap();
     assert_eq!(first.env["API_KEY"], "first-only");
     assert!(!second.env.contains_key("API_KEY"));
 }
@@ -124,20 +124,20 @@ fn fragmented_utf8_and_final_line_without_newline_are_preserved() {
 fn requests_carry_exactly_one_program() {
     assert!(serde_json::from_value::<Request>(json!({"id": "missing"}))
         .unwrap()
-        .job()
+        .job(None)
         .is_err());
-    assert!(request(json!({"code": "print(1)"})).job().is_err());
-    assert!(request(json!({"name": "step.py"})).job().is_err());
+    assert!(request(json!({"code": "print(1)"})).job(None).is_err());
+    assert!(request(json!({"name": "step.py"})).job(None).is_err());
     let inline = serde_json::from_value::<Request>(json!({"code": "print(1)", "args": ["x"]}))
         .unwrap()
-        .job()
+        .job(None)
         .unwrap();
     assert_eq!(inline.policy.script.to_str(), Some("<code>"));
     assert_eq!(inline.policy.source.as_deref(), Some("print(1)"));
     assert_eq!(inline.policy.args, ["x"]);
     let named = serde_json::from_value::<Request>(json!({"code": "print(1)", "name": "step.py"}))
         .unwrap()
-        .job()
+        .job(None)
         .unwrap();
     assert_eq!(named.policy.script.to_str(), Some("step.py"));
 }

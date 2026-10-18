@@ -7,7 +7,7 @@ can drive it; `examples/agent_tool.py` is the Python client.
 ## Starting
 
 ```bash
-pynox pool --workers=2 [--preload=pandas,numpy] [--package-dir=/path/to/site-packages]
+pynox pool --workers=2 [--preload=pandas,numpy] [--package-dir=/path/to/site-packages] [--config=pynox.toml]
 ```
 
 | Flag | Meaning |
@@ -15,11 +15,13 @@ pynox pool --workers=2 [--preload=pandas,numpy] [--package-dir=/path/to/site-pac
 | `--workers=N` | Concurrent executions, 1 to 32; each has its own template |
 | `--preload=a,b` | Trusted modules imported once in every template, before any job |
 | `--package-dir=PATH` | Trusted package directory readable by every job |
+| `--config=PATH` | `pynox.toml` with `[pool]`, `[pool.limits]` and `[profiles]`; default `$PYNOX_CONFIG`, then `./pynox.toml` |
 
 The first output line is the `ready` event:
 
 ```json
-{"event": "ready", "workers": 2, "runtime": "pynox", "preloaded_modules": [], "package_dirs": []}
+{"event": "ready", "workers": 2, "runtime": "pynox", "preloaded_modules": [], "package_dirs": [],
+ "config": "/etc/pynox/prod.toml", "profiles": ["analysis", "fetch"]}
 ```
 
 Preloads are operator configuration, never a request field. A template that
@@ -41,6 +43,7 @@ One JSON object per line. Exactly one of `script` and `code` is required.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `id` | line number | Copied into the result; assign unique IDs |
+| `profile` | | Named permission set from the configuration; the request's own fields add to it |
 | `code` | | Inline program text. No file, no file access, no `__file__` |
 | `name` | `<code>` | Label for inline code in errors and `sys.argv[0]` |
 | `script` | | Path of a file to run; only that file is implicitly readable |
@@ -56,6 +59,40 @@ One JSON object per line. Exactly one of `script` and `code` is required.
 
 Unknown fields are rejected. A line longer than 1 MiB is discarded with an
 error and the next line is read normally.
+
+## Configuration
+
+```toml
+[pool]
+workers = 4
+preload = ["pandas"]
+package_dirs = ["/srv/agent/site-packages"]
+
+[pool.limits]
+allow_read = ["/srv/agent/data"]
+allow_write = ["/srv/agent/work"]
+allow_network = false
+timeout = "30s"
+memory = "1g"
+max_output = 1048576
+
+[profiles.analysis]
+allow_read = ["/srv/agent/data"]
+allow_write = ["/srv/agent/work"]
+
+[profiles.fetch]
+allow_network = true
+```
+
+`[pool]` provides defaults that the command line overrides. `[pool.limits]` is
+a ceiling: every path a request asks for must lie beneath a listed one, the
+network needs `allow_network = true` in the limits, and timeout, memory and
+output may not exceed them. A request outside the ceiling fails with
+`RequestError` before anything runs. Profiles are presets a request names;
+its own fields are added on top, then the ceiling applies. The command-line
+`[permissions]` section does not apply to the pool. Relative paths in the file
+resolve against its directory, and a file beneath one of its own write grants
+is refused. See [ADR 012](../adr/012-configuration.md).
 
 ## Results
 

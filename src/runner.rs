@@ -1,5 +1,9 @@
-//! Linux process supervision and structured execution results.
-use crate::policy::{python_info, Cli, Policy};
+//! Process supervision for one sandboxed task: pass output through like
+//! `python`, or capture it into a structured JSON result with `--json`.
+use crate::{
+    config::Config,
+    policy::{python_info, Invocation, Policy, Program},
+};
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::{
@@ -37,6 +41,14 @@ fn drain(mut reader: impl Read, maximum: usize) -> (Vec<u8>, bool) {
     (captured, truncated)
 }
 
+fn pipe() -> Result<(File, File)> {
+    let mut fds = [-1; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
+}
+
 /// Block until the worker exits or the deadline passes. A pidfd wakes the
 /// supervisor immediately, instead of a polling sleep adding latency to
 /// every task.
@@ -72,33 +84,104 @@ fn wait_until(child: &mut Child, deadline: Instant) -> Result<(ExitStatus, bool)
     }
 }
 
-pub fn supervise(cli: &Cli, start: Instant) -> Result<Value> {
-    let policy = Policy::from_cli(cli, None)?;
-    let mut fds = [-1; 2];
-    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
-        return Err(std::io::Error::last_os_error().into());
+/// Resolve configuration, profile and flags into one policy. Command-line
+/// flags widen the configured defaults: the person typing them is the operator.
+pub fn policy_for(invocation: &Invocation) -> Result<Policy> {
+    let config = Config::discover(invocation.config.as_deref())?;
+    let grants = match &config {
+        Some(config) => config
+            .grants(invocation.profile.as_deref())?
+            .overlay(&invocation.grants),
+        None if invocation.profile.is_some() => {
+            anyhow::bail!("--profile needs a pynox.toml (see --config)")
+        }
+        None => invocation.grants.clone(),
+    };
+    let program = Program::from_python_args(&invocation.python_args)?;
+    Policy::new(&grants, program, invocation.json)
+}
+
+/// Run a sandboxed task end to end and return the process exit status.
+pub fn execute(invocation: &Invocation, start: Instant) -> i32 {
+    match supervise(invocation, start) {
+        Ok(result) => report(invocation.json, &result),
+        Err(error) => {
+            if invocation.json {
+                let result = json!({
+                    "exit": 125,
+                    "error": {"type": "LauncherError", "message": format!("{error:#}")},
+                    "stdout": "", "stderr": "", "duration_ms": start.elapsed().as_millis()
+                });
+                println!("{result}");
+            } else {
+                eprintln!("pynox: {error:#}");
+            }
+            125
+        }
     }
-    let report_reader = unsafe { File::from_raw_fd(fds[0]) };
-    let report_writer = unsafe { File::from_raw_fd(fds[1]) };
+}
+
+fn report(json: bool, result: &Value) -> i32 {
+    let exit = result["exit"].as_i64().unwrap_or(125) as i32;
+    if json {
+        println!("{result}");
+        return exit;
+    }
+    // Output already went to the terminal. Python exceptions printed their
+    // traceback; add the hint, and describe failures that produced no traceback.
+    let error = &result["error"];
+    if error.is_object() {
+        if error["file"].is_null() && error["line"].is_null() {
+            eprintln!(
+                "pynox: {}: {}",
+                error["type"].as_str().unwrap_or("Error"),
+                error["message"].as_str().unwrap_or("")
+            );
+        }
+        if let Some(hint) = error["hint"].as_str() {
+            eprintln!("pynox: {hint}");
+        }
+    }
+    exit
+}
+
+pub fn supervise(invocation: &Invocation, start: Instant) -> Result<Value> {
+    let policy = policy_for(invocation)?;
+    let (report_reader, report_writer) = pipe()?;
+    let (policy_reader, mut policy_writer) = pipe()?;
     let report_fd = report_writer.as_raw_fd();
+    let policy_fd = policy_reader.as_raw_fd();
     let mut command = Command::new(std::env::current_exe()?);
     command
         .arg("--internal-worker")
         .env_clear()
         .env("LANG", "C.UTF-8")
         .env("OPENBLAS_NUM_THREADS", "1")
-        .env("OMP_NUM_THREADS", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    for name in &cli.allow_env {
+        .env("OMP_NUM_THREADS", "1");
+    if policy.capture {
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+    } else {
+        command
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+    }
+    for name in &policy.allow_env {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
         }
     }
     unsafe {
         command.pre_exec(move || {
-            if libc::dup2(report_fd, 3) < 0 || libc::fcntl(3, libc::F_SETFD, 0) < 0 {
+            // Descriptor 3 carries the report back; 4 delivers the policy.
+            if libc::dup2(report_fd, 3) < 0
+                || libc::fcntl(3, libc::F_SETFD, 0) < 0
+                || libc::dup2(policy_fd, 4) < 0
+                || libc::fcntl(4, libc::F_SETFD, 0) < 0
+            {
                 return Err(std::io::Error::last_os_error());
             }
             // If the supervisor disappears, do not leave a worker running.
@@ -109,31 +192,33 @@ pub fn supervise(cli: &Cli, start: Instant) -> Result<Value> {
         });
     }
     let mut child = command.spawn().context("Cannot start sandbox worker")?;
-    drop(report_writer);
+    drop((report_writer, policy_reader));
+    policy_writer.write_all(serde_json::to_string(&policy)?.as_bytes())?;
+    drop(policy_writer);
     let maximum = policy.max_output;
-    let out = child.stdout.take().unwrap();
-    let err = child.stderr.take().unwrap();
-    let stdout_task = thread::spawn(move || drain(out, maximum));
-    let stderr_task = thread::spawn(move || drain(err, maximum));
+    let stdout_task = child
+        .stdout
+        .take()
+        .map(|out| thread::spawn(move || drain(out, maximum)));
+    let stderr_task = child
+        .stderr
+        .take()
+        .map(|err| thread::spawn(move || drain(err, maximum)));
     let report_task = thread::spawn(move || drain(report_reader, 65_536));
-    let mut stdin = child.stdin.take().unwrap();
-    stdin.write_all(serde_json::to_string(&policy)?.as_bytes())?;
-    drop(stdin);
     let (status, timed_out) =
         wait_until(&mut child, start + Duration::from_millis(policy.timeout_ms))?;
-    let (stdout, stdout_truncated) = stdout_task.join().unwrap();
-    let (stderr, stderr_truncated) = stderr_task.join().unwrap();
-    let (report, report_truncated) = report_task.join().unwrap();
+    let collect = |task: Option<thread::JoinHandle<(Vec<u8>, bool)>>| {
+        task.map_or((Vec::new(), false), |task| task.join().unwrap())
+    };
+    let stdout = collect(stdout_task);
+    let stderr = collect(stderr_task);
+    let report = report_task.join().unwrap();
     Ok(finish(
         &policy,
         start,
         status,
         timed_out,
-        [
-            (stdout, stdout_truncated),
-            (stderr, stderr_truncated),
-            (report, report_truncated),
-        ],
+        [stdout, stderr, report],
     ))
 }
 
@@ -189,10 +274,14 @@ pub fn finish(
     result["stderr_truncated"] = stderr_truncated.into();
     result["duration_ms"] = json!(start.elapsed().as_millis());
     result["duration_us"] = json!(start.elapsed().as_micros());
-    result["runtime"] = json!({"name": "pynox", "python": python_info().version});
+    result["runtime"] = json!({
+        "name": "pynox", "python": python_info().version,
+        "output": if policy.capture { "captured" } else { "passthrough" }
+    });
     result["policy"] = json!({
         "allow_read": policy.allow_read, "allow_write": policy.allow_write,
-        "package_dirs": policy.package_dirs,
+        "implicit_read": policy.implicit_read,
+        "package_dirs": policy.package_dirs, "allow_env": policy.allow_env,
         "network": if policy.allow_network { "ipv4+ipv6" } else { "deny" },
         "subprocesses": "deny", "host_unix_sockets": "deny",
         "timeout_ms": policy.timeout_ms, "memory_bytes": policy.memory_bytes,

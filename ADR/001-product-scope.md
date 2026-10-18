@@ -20,10 +20,11 @@ frameworks and on "a faster Python"; neither is the differentiator.
 ## Decision
 
 Name the product Pynox. Keep CPython as the language engine and build one
-Linux binary with three doors: `pynox script.py` behaves like `python`,
-`pynox sandbox` runs one task with explicit permissions and a structured
-result, and `pynox pool` serves many such tasks from a warm template. Agents
-are the primary workload; scripts, services and data jobs use the same binary.
+Linux binary: `pynox script.py` runs the script sandboxed with Python's normal
+terminal behavior, `--json` returns a structured result, `--no-sandbox` is
+CPython's own command line, and `pynox pool` serves many tasks from a warm
+template. Agents are the primary workload; scripts, services and data jobs use
+the same binary.
 
 Preserve ordinary Python source and imports; require no `import pynox`.
 Integrate with agent frameworks, including Pydantic's Monty, as their

@@ -5,6 +5,7 @@
 compile_error!("Pynox requires Linux on x86_64 or aarch64");
 
 mod capture;
+mod config;
 mod forkserver;
 mod native_json;
 mod policy;
@@ -16,26 +17,39 @@ mod sandbox;
 mod worker;
 
 use clap::Parser;
-use policy::Cli;
 use serde_json::json;
+use std::ffi::OsString;
 
 const HELP: &str = "\
-Pynox: a Python runtime for agents and scripts, with transparent optimizations and an optional sandbox
+Pynox: the Python runtime for agents. Sandboxed by default, plain Python on request.
 
 Usage:
-  pynox [PYTHON_OPTIONS] SCRIPT [ARGS]   Run a script like `python`, with Pynox's optimizations
-  pynox -c CODE | -m MODULE              Any CPython command line works here
-  pynox sandbox [OPTIONS] SCRIPT [ARGS]  Run with explicit permissions and limits; prints a JSON result
-  pynox pool [OPTIONS]                   Sandboxed JSONL task pool for agents and services
-  pynox doctor                           Check runtime and kernel capabilities
-  pynox --version                        Show Pynox and CPython versions
+  pynox [FLAGS] SCRIPT [ARGS]        Run a script in the sandbox; output and exit code are Python's
+  pynox [FLAGS] -c CODE | -m MODULE  Same, for inline code or a module
+  pynox --json [FLAGS] ...           Print one JSON result instead (for agents and automation)
+  pynox --no-sandbox [PYTHON ARGS]   CPython's own command line, unrestricted
+  pynox pool [OPTIONS]               Sandboxed JSONL task pool (`pynox pool --help`)
+  pynox doctor                       Check runtime and kernel capabilities
+  pynox --version                    Show Pynox and CPython versions
 
-Run `pynox sandbox --help` or `pynox pool --help` for their options.
-`pynox python ...` is accepted as an alias for the default mode.";
+Permissions (deny by default; the script's directory is readable, the current
+directory for -m):
+  --allow-read=PATH      Read an existing file or directory (repeatable)
+  --allow-write=PATH     Write beneath an existing path; does not grant reads
+  --package-dir=PATH     Import installed packages from this directory
+  --allow-env=NAME       Forward an environment variable
+  --allow-network        IPv4/IPv6; subprocesses and host Unix sockets stay denied
+  --timeout=5s           Wall-clock limit        --memory=512m   Address-space limit
+  --max-output=65536     Captured bytes per stream, with --json
+
+Configuration:
+  --config=PATH          pynox.toml with permissions, profiles and pool settings
+                         (default: $PYNOX_CONFIG, then ./pynox.toml)
+  --profile=NAME         Apply a named profile from the configuration";
 
 fn main() {
-    let command = std::env::args().nth(1);
-    match command.as_deref() {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    match args.get(1).and_then(|arg| arg.to_str()) {
         Some("doctor") => std::process::exit(runtime::doctor()),
         Some("--version" | "-V") => {
             println!("pynox {}", runtime::cli_version());
@@ -45,7 +59,6 @@ fn main() {
             println!("{HELP}");
             return;
         }
-        Some("python") => std::process::exit(runtime::python(2)),
         Some("--internal-worker") => std::process::exit(worker::run(false)),
         Some("--internal-template") => std::process::exit(pool::template_main()),
         Some("pool") => {
@@ -59,19 +72,18 @@ fn main() {
             }
             return;
         }
-        Some("sandbox" | "run") => {}
-        // Anything that is not a Pynox command is CPython's own command line.
-        _ => std::process::exit(runtime::python(1)),
+        _ => {}
     }
-    let cli = Cli::parse_from(std::env::args().skip(1));
+    let invocation = match policy::parse_invocation(&args[1..]) {
+        Ok(invocation) => invocation,
+        Err(error) => {
+            eprintln!("pynox: {error:#}");
+            std::process::exit(2);
+        }
+    };
+    if invocation.no_sandbox {
+        std::process::exit(runtime::python(invocation.python_args));
+    }
     let start = std::time::Instant::now();
-    let result = runner::supervise(&cli, start).unwrap_or_else(|error| {
-        json!({
-            "exit": 125,
-            "error": {"type": "LauncherError", "message": format!("{error:#}")},
-            "stdout": "", "stderr": "", "duration_ms": start.elapsed().as_millis()
-        })
-    });
-    println!("{}", result);
-    std::process::exit(result["exit"].as_i64().unwrap_or(125) as i32);
+    std::process::exit(runner::execute(&invocation, start));
 }

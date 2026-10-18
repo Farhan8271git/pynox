@@ -15,7 +15,7 @@ use std::{
     fs::File,
     io::Read,
     mem::MaybeUninit,
-    os::fd::AsRawFd,
+    os::fd::{AsRawFd, FromRawFd},
     path::Path,
     ptr,
 };
@@ -60,22 +60,27 @@ fn write_report(report: &Value) {
 
 fn execute(warm: bool) -> Result<i32> {
     let mut input = String::new();
-    std::io::stdin()
-        .take(1_048_576)
-        .read_to_string(&mut input)?;
     let (policy, env) = if warm {
+        // Pool children receive the job on stdin, then lose it.
+        std::io::stdin()
+            .take(1_048_576)
+            .read_to_string(&mut input)?;
+        let null = File::open("/dev/null")?;
+        if unsafe { libc::dup2(null.as_raw_fd(), 0) } < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
         let job: Job = serde_json::from_str(&input)?;
         (job.policy, Some(job.env))
     } else {
+        // Cold workers receive the policy on descriptor 4; stdin is whatever the
+        // supervisor chose: the user's terminal in passthrough mode, /dev/null with --json.
+        let mut pipe = unsafe { File::from_raw_fd(4) };
+        pipe.by_ref().take(1_048_576).read_to_string(&mut input)?;
+        drop(pipe);
         (serde_json::from_str(&input)?, None)
     };
     let python = python_info();
-    // No caller-provided descriptors or stdin are exposed to user code.
-    let null = File::open("/dev/null")?;
-    if unsafe { libc::dup2(null.as_raw_fd(), 0) } < 0 {
-        return Err(std::io::Error::last_os_error().into());
-    }
-    drop(null);
+    // No caller-provided descriptors beyond stdio and the report are exposed to user code.
     if unsafe { libc::syscall(libc::SYS_close_range, 4u32, u32::MAX, 0u32) } != 0 {
         bail!("close_range failed: {}", std::io::Error::last_os_error());
     }
@@ -91,15 +96,21 @@ fn execute(warm: bool) -> Result<i32> {
             let result = call_bootstrap(c"_pynox_env", vec![string_dict(&env)?])?;
             py::Py_DECREF(result);
         }
+        let optional = |text: &Option<String>| -> Result<*mut py::PyObject> {
+            match text {
+                Some(text) => unicode(text),
+                None => Ok(py::Py_NewRef(py::Py_None())),
+            }
+        };
         let arguments = vec![
             unicode(utf8(&policy.script)?)?,
+            unicode(&policy.argv0)?,
             string_list(policy.args.iter().map(String::as_str))?,
             path_list(&policy.package_dirs)?,
             path_list(&python.site_packages)?,
-            match &policy.source {
-                Some(code) => unicode(code)?,
-                None => py::Py_NewRef(py::Py_None()),
-            },
+            optional(&policy.source)?,
+            optional(&policy.module)?,
+            py::PyBool_FromLong(policy.capture as libc::c_long),
         ];
         let result = call_bootstrap(c"_pynox_run", arguments)?;
         let report = to_json(result);

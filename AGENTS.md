@@ -1,12 +1,15 @@
 # Working on Pynox
 
 Read README.md and ADR/README.md first. Pynox is an agent-first CPython
-runtime: a Rust launcher, an opt-in kernel sandbox, a warm pool and measured
+runtime: a Rust launcher, a kernel sandbox on by default, a warm pool and measured
 native optimizations, in one Linux binary that also works as `python`.
 
 - Preserve ordinary Python source/imports. Do not introduce mandatory frameworks.
-- `pynox script.py` is plain CPython plus transparent optimizations. The sandbox
-  is opt-in through `pynox sandbox` and `pynox pool`; never make it the default.
+- `pynox script.py` is sandboxed by default with Python's normal terminal
+  behavior; `--json` returns the structured result and `--no-sandbox` is plain
+  CPython. The only implicit grant is the script's directory (cwd for `-m`).
+- `pynox.toml` is operator configuration: discovered from `--config`,
+  `PYNOX_CONFIG` or the current directory, never beside the script.
 - Optimizations are always on and lazy, never behind a flag. Each needs an
   eligibility contract, a fallback to CPython's behavior and paired measurements.
 - Startup is a budget: embedded Python is precompiled in `build.rs`, and the

@@ -46,9 +46,10 @@ For files, grant the specific path with --allow-read/--allow-write. ...
 
 Each call runs in a fresh process forked from a warm CPython template, under
 Landlock and seccomp, with the files, network, time and memory **you** chose.
-A small task answers in about 5 ms. And it is still just Python:
-`pynox app.py` behaves like `python app.py`, options, output and exit code
-included.
+A small task answers in about 5 ms. At the terminal it is still Python:
+`pynox app.py` prints what the script prints and exits how it exits, only
+sandboxed by default. `pynox.toml` states a project's permissions once;
+`--no-sandbox` is the plain interpreter.
 
 ## Why CPython, and why Rust
 
@@ -65,10 +66,10 @@ fast as in CPython.
 What Pynox does make faster is measured, operation by operation, against the
 same program on stock CPython:
 
-| Workload | CPython | `pynox` | `pynox pool` |
-| --- | ---: | ---: | ---: |
-| Tiny script | 7.68 ms | 8.09 ms | 4.68 ms |
-| JSON pipeline, 3.89 MiB | 153.80 ms | 78.50 ms | 75.75 ms |
+| Workload | CPython | `pynox` (sandboxed) | `pynox --no-sandbox` | `pynox pool` |
+| --- | ---: | ---: | ---: | ---: |
+| Tiny script | 7.45 ms | 10.06 ms | 7.67 ms | 4.47 ms |
+| JSON pipeline, 3.89 MiB | 153.63 ms | 81.52 ms | 78.46 ms | 74.48 ms |
 
 End-to-end p50 on this project's Linux ARM64 host with CPython 3.11; see
 [performance](performance.md) for method, limits and the full table.
@@ -99,8 +100,10 @@ file access granted by accident.
 **Transparent optimizations** - Native paths for common operations, always on,
 applied lazily when the program imports the module they optimize.
 
-**Drop-in Python** - `pynox script.py`, `-c`, `-m` and every CPython option.
-One binary bundles its own CPython, 3.11 through 3.15.
+**Secure by default, Python at the terminal** - `pynox script.py`, `-c` and
+`-m` run sandboxed with Python's own output and exit codes. `--no-sandbox`
+gives you every CPython option. One binary bundles its own CPython, 3.11
+through 3.15.
 
 ## Guides
 
@@ -117,7 +120,7 @@ One binary bundles its own CPython, 3.11 through 3.15.
 | Guide | Description |
 | --- | --- |
 | [Getting started](getting-started.md) | Build, run a script, run it sandboxed |
-| [Commands](usage.md) | `pynox`, `pynox sandbox`, `pynox pool`, `pynox doctor` |
+| [Commands](usage.md) | `pynox`, `--json`, `--no-sandbox`, `pynox.toml`, `pynox pool`, `pynox doctor` |
 | [Sandbox contract](sandbox.md) | What is granted, what is denied, what remains |
 | [Performance](performance.md) | Optimizations, startup budget, measurements |
 

@@ -4,11 +4,14 @@
 
 - Introduce Pynox as a pre-alpha, agent-first Python runtime: a Rust launcher
   embedding CPython 3.11–3.15, with 3.11 as the default and per-minor pins.
-- Make `pynox script.py` (and `-c`, `-m`) the default mode: CPython's command
-  line with transparent optimizations and no sandbox.
-- Provide opt-in Linux sandboxing through `pynox sandbox` and `pynox pool`,
-  with filesystem, network and process restrictions, bounded output,
-  environment grants, wall timeout and address-space limits.
+- Sandbox `pynox script.py`, `-c` and `-m` by default with Python's own
+  stdin, stdout, stderr and exit status; `--json` returns one structured
+  result and `--no-sandbox` runs CPython's unrestricted command line.
+- Read `pynox.toml` for standing permissions, named profiles and pool
+  settings, including `[pool.limits]` as a ceiling for every request.
+- Enforce filesystem, network and process restrictions, bounded output,
+  environment grants, wall timeout and address-space limits per task. The
+  script's directory is the only implicit read grant.
 - Support asyncio's internal wakeup socketpair and opt-in IPv4/IPv6.
 - Retain a JSONL pool with clean templates and disposable per-task children;
   accept inline `code` with an optional `name` instead of a script file.
@@ -17,8 +20,8 @@
 - Apply a bounded `json.dump` fast path transparently, installed lazily when the
   application imports `json`; `--optimize-json` and the pool's `optimize_json`
   field no longer exist.
-- Keep `pynox python` as an alias of the default mode and `pynox doctor` as the
-  capability probe, reporting runtime and sandbox support separately.
+- Keep `pynox doctor` as the capability probe, reporting runtime and sandbox
+  support separately.
 - Report Pynox and the loaded CPython runtime together in `--version` / `-V`.
 - Keep flags after the script in Python's arguments, preventing them from
   changing runtime permissions or limits.

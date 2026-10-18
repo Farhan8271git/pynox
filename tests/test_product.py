@@ -2,43 +2,134 @@
 
 import json
 import os
-import platform
 import socket
 import subprocess
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
 import test_runtime as runtime
 
 
-class ProductTests(unittest.TestCase):
-    def python(self, *args):
-        return subprocess.run(
-            [str(runtime.BINARY), *args],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+def run(*args, cwd=None, env=None, stdin=None):
+    return subprocess.run(
+        [str(runtime.BINARY), *map(str, args)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=cwd,
+        env=env,
+        input=stdin,
+    )
 
-    def test_default_mode_is_the_python_cli(self):
-        result = self.python("-c", "import sys; print(sys.argv[1:]); sys.exit(7)", "one")
-        self.assertEqual(result.returncode, 7, result.stderr)
-        self.assertEqual(result.stdout, "['one']\n")
-        result = self.python("-m", "json.tool", "--help")
+
+class DefaultModeTests(unittest.TestCase):
+    """`pynox script.py` is sandboxed Python with Python's output and exit codes."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="pynox-product-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def write(self, name, code):
+        path = self.root / name
+        path.write_text(textwrap.dedent(code))
+        return path
+
+    def test_output_exit_code_and_arguments_are_pythons(self):
+        script = self.write("plain.py", "import sys\nprint('plain', sys.argv[1:])\nsys.exit(3)\n")
+        result = run(script, "--allow-network", "x")
+        self.assertEqual(
+            (result.returncode, result.stdout), (3, "plain ['--allow-network', 'x']\n")
+        )
+        self.assertEqual(result.stderr, "")
+        result = run("-c", "import sys; print(sys.argv, __name__); sys.exit(7)", "one")
+        self.assertEqual((result.returncode, result.stdout), (7, "['-c', 'one'] __main__\n"))
+        result = run("-m", "json.tool", "--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        # The explicit alias keeps working for existing integrations.
-        result = self.python("python", "-c", "print('alias')")
-        self.assertEqual((result.returncode, result.stdout), (0, "alias\n"), result.stderr)
-        with tempfile.TemporaryDirectory() as temporary:
-            script = Path(temporary) / "script.py"
-            script.write_text("import sys\nprint('plain', sys.argv[1:])\nsys.exit(3)\n")
-            result = self.python(str(script), "--allow-network", "x")
-            self.assertEqual(result.returncode, 3, result.stderr)
-            self.assertEqual(result.stdout, "plain ['--allow-network', 'x']\n")
+        self.assertIn("usage: python -m json.tool", result.stdout)
+
+    def test_sandbox_applies_with_traceback_and_hint_on_stderr(self):
+        script = self.write("probe.py", "open('/etc/passwd').read()\n")
+        result = run(script)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("Traceback (most recent call last):", result.stderr)
+        self.assertIn('probe.py", line 1', result.stderr)
+        self.assertNotIn("pynox-bootstrap", result.stderr)
+        self.assertIn("PermissionError: [Errno 13] Permission denied: '/etc/passwd'", result.stderr)
+        self.assertIn("pynox: For files, grant the specific path", result.stderr)
+        result = run("--allow-read=/etc/passwd", script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_script_directory_is_readable_and_nothing_else(self):
+        self.write("helper.py", "VALUE = 'sibling import works'\n")
+        (self.root / "data.txt").write_text("sibling file")
+        script = self.write(
+            "main.py",
+            "import helper\nprint(helper.VALUE)\nprint(open(__file__.replace('main.py', 'data.txt')).read())\n",
+        )
+        result = run(script)
+        self.assertEqual(result.stdout, "sibling import works\nsibling file\n", result.stderr)
+        with tempfile.TemporaryDirectory(prefix="pynox-elsewhere-") as elsewhere:
+            (Path(elsewhere) / "secret.txt").write_text("private")
+            denied = self.write(
+                "reader.py", f"open({str(Path(elsewhere) / 'secret.txt')!r}).read()\n"
+            )
+            self.assertEqual(run(denied).returncode, 1)
+            # -c grants nothing implicitly, not even the current directory.
+            result = run("-c", "open('secret.txt').read()", cwd=elsewhere)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("PermissionError", result.stderr)
+            # -m resolves modules from the current directory, so it may read it.
+            (Path(elsewhere) / "mod.py").write_text("print(open('secret.txt').read())\n")
+            result = run("-m", "mod", cwd=elsewhere)
+            self.assertEqual((result.returncode, result.stdout), (0, "private\n"), result.stderr)
+
+    def test_interpreter_options_need_no_sandbox(self):
+        result = run("-O", "-c", "pass")
+        self.assertEqual(result.returncode, 125)
+        self.assertIn("use --no-sandbox", result.stderr)
+        result = run("-I", "-u", "-c", "print('isolation flags are accepted')")
+        self.assertEqual(result.stdout, "isolation flags are accepted\n", result.stderr)
+        result = run()
+        self.assertEqual(result.returncode, 125)
+        self.assertIn("REPL needs --no-sandbox", result.stderr)
+
+    def test_stdin_passes_through(self):
+        result = run("-c", "import sys; print(sys.stdin.read().strip().upper())", stdin="hello\n")
+        self.assertEqual(result.stdout, "HELLO\n", result.stderr)
+
+    def test_timeout_and_setup_failures_are_reported_on_stderr(self):
+        script = self.write("loop.py", "while True: pass\n")
+        result = run("--timeout=200ms", script)
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("pynox: TimeoutError: Wall time exceeded 200ms", result.stderr)
+        result = run("--allow-read=/definitely/missing", script)
+        self.assertEqual(result.returncode, 125)
+        self.assertIn("Permission path must exist", result.stderr)
+
+
+class NoSandboxTests(unittest.TestCase):
+    def test_no_sandbox_is_the_cpython_cli(self):
+        result = run("--no-sandbox", "-c", "import sys; print(sys.argv[1:]); sys.exit(7)", "one")
+        self.assertEqual((result.returncode, result.stdout), (7, "['one']\n"), result.stderr)
+        result = run("--no-sandbox", "-O", "-c", "print(__debug__)")
+        self.assertEqual(result.stdout, "False\n", result.stderr)
+        result = run("--no-sandbox", "-c", "print(open('/etc/passwd').readline() != '')")
+        self.assertEqual(result.stdout, "True\n", result.stderr)
+        for bad in (
+            ["--no-sandbox", "--json", "x.py"],
+            ["--no-sandbox", "--allow-network", "x.py"],
+        ):
+            result = run(*bad)
+            self.assertEqual(result.returncode, 2, bad)
+            self.assertIn("--no-sandbox cannot be combined", result.stderr)
 
     def test_optimizations_are_transparent_and_lazy(self):
-        result = self.python(
+        result = run(
+            "--no-sandbox",
             "-c",
             "import sys\n"
             "before = '_pynox_json_runtime' in sys.modules, 'json' in sys.modules\n"
@@ -50,25 +141,21 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "(False, False) True json SourceFileLoader True json\n")
 
-    def test_doctor_and_version(self):
-        result = subprocess.run([runtime.BINARY, "doctor"], capture_output=True, check=True)
-        doctor = json.loads(result.stdout)
+    def test_doctor_version_and_help(self):
+        doctor = json.loads(subprocess.check_output([runtime.BINARY, "doctor"]))
         self.assertEqual(doctor["runtime"], "pynox")
-        python = self.python("-c", "import platform; print(platform.python_version())")
-        self.assertEqual(python.returncode, 0, python.stderr)
+        python = run("--no-sandbox", "-c", "import platform; print(platform.python_version())")
         expected = f"pynox {doctor['version']} (CPython {python.stdout.strip()})\n"
         for flag in ("--version", "-V"):
             with self.subTest(flag=flag):
-                result = subprocess.run(
-                    [runtime.BINARY, flag], capture_output=True, text=True, check=True
-                )
-                self.assertEqual(result.stdout, expected)
-                self.assertEqual(result.stderr, "")
-        result = subprocess.run(
-            [runtime.BINARY, "--help"], capture_output=True, text=True, check=True
-        )
-        self.assertIn("pynox sandbox", result.stdout)
+                result = run(flag)
+                self.assertEqual((result.stdout, result.stderr), (expected, ""))
+        result = run("--help")
+        self.assertIn("--no-sandbox", result.stdout)
+        self.assertIn("pynox.toml", result.stdout)
 
+
+class JsonContractTests(unittest.TestCase):
     def stock_results(self):
         source = runtime.ROOT / "tests/fixtures/json_contract.py"
         doctor = json.loads(subprocess.check_output([runtime.BINARY, "doctor"]))
@@ -83,33 +170,26 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(len(expected), 158)
         return source, expected
 
-    def test_json_differential(self):
+    def test_json_differential_without_sandbox(self):
         source, expected = self.stock_results()
-        result = self.python("-I", "-S", "-B", str(source))
+        result = run("--no-sandbox", "-I", "-S", "-B", source)
         self.assertEqual(result.returncode, 0, result.stderr)
         actual = json.loads(result.stdout)
         self.assertEqual(expected, actual["results"])
         self.assertEqual(actual["paths"]["nested"]["fast"], 1)
         self.assertEqual(actual["paths"]["writer_custom"]["fallback"], 1)
 
-    @unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
     def test_json_differential_under_sandbox(self):
         source, expected = self.stock_results()
         with tempfile.TemporaryDirectory() as temporary:
-            completed = subprocess.run(
-                [
-                    runtime.BINARY,
-                    "sandbox",
-                    "--max-output=1048576",
-                    f"--allow-read={temporary}",
-                    f"--allow-write={temporary}",
-                    "--allow-env=TMPDIR",
-                    source,
-                ],
+            completed = run(
+                "--json",
+                "--max-output=1048576",
+                f"--allow-read={temporary}",
+                f"--allow-write={temporary}",
+                "--allow-env=TMPDIR",
+                source,
                 env={**os.environ, "TMPDIR": temporary},
-                capture_output=True,
-                text=True,
-                timeout=30,
             )
         report = json.loads(completed.stdout)
         self.assertEqual(report["exit"], 0, report)
@@ -125,7 +205,6 @@ class ProductTests(unittest.TestCase):
         )
         self.assertEqual(actual["paths"]["nested"]["fast"], 1)
 
-    @unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
     def test_sandbox_uses_utf8_like_stock_python(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -135,18 +214,130 @@ class ProductTests(unittest.TestCase):
                 f"with open({str(root / 'out.txt')!r}, 'w') as f: f.write('ação')\n"
                 "print(sys.getfilesystemencoding(), sys.stdout.encoding, 'ação')\n"
             )
-            result = subprocess.run(
-                [runtime.BINARY, "sandbox", f"--allow-write={root}", script],
-                text=True,
-                capture_output=True,
-                timeout=10,
-            )
+            result = run("--json", f"--allow-write={root}", script)
             report = json.loads(result.stdout)
             self.assertEqual(report["exit"], 0, report)
             self.assertEqual(report["stdout"], "utf-8 utf-8 ação\n")
             self.assertEqual((root / "out.txt").read_bytes(), "ação".encode())
 
-    @unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
+    def test_json_result_describes_the_effective_policy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            script = Path(temporary) / "s.py"
+            script.write_text("print('ok')\n")
+            report = json.loads(run("--json", "--timeout=2s", script).stdout)
+        self.assertEqual((report["exit"], report["stdout"]), (0, "ok\n"))
+        self.assertEqual(report["policy"]["implicit_read"], [str(script.parent.resolve())])
+        self.assertEqual(report["policy"]["timeout_ms"], 2000)
+        self.assertEqual(report["runtime"]["output"], "captured")
+
+
+class ConfigurationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="pynox-config-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.data = self.root / "data"
+        self.data.mkdir()
+        (self.data / "input.txt").write_text("configured read")
+        self.out = self.root / "out"
+        self.out.mkdir()
+        self.script = self.root / "scripts" / "job.py"
+        self.script.parent.mkdir()
+        self.script.write_text(
+            f"print(open({str(self.data / 'input.txt')!r}).read())\n"
+            f"open({str(self.out / 'result.txt')!r}, 'w').write('written')\n"
+        )
+        self.env = {k: v for k, v in os.environ.items() if k != "PYNOX_CONFIG"}
+
+    def test_pynox_toml_in_the_current_directory_grants_permissions(self):
+        (self.root / "pynox.toml").write_text(
+            '[permissions]\nallow_read = ["data"]\nallow_write = ["out"]\n'
+        )
+        denied = run(self.script, cwd=self.root / "scripts", env=self.env)
+        self.assertEqual(denied.returncode, 1, "a file beside the script must not count")
+        result = run(self.script, cwd=self.root, env=self.env)
+        self.assertEqual(
+            (result.returncode, result.stdout), (0, "configured read\n"), result.stderr
+        )
+        self.assertEqual((self.out / "result.txt").read_text(), "written")
+
+    def test_explicit_config_env_var_and_profiles(self):
+        config = self.root / "etc" / "prod.toml"
+        config.parent.mkdir()
+        config.write_text(
+            '[permissions]\nallow_read = ["../data"]\n'
+            '[profiles.writer]\nallow_write = ["../out"]\ntimeout = "9s"\n'
+        )
+        result = run(self.script, "--config", config, env=self.env)
+        self.assertEqual(result.returncode, 1, "profile not applied, write must fail")
+        result = run("--json", f"--config={config}", "--profile=writer", self.script, env=self.env)
+        report = json.loads(result.stdout)
+        self.assertEqual((report["exit"], report["stdout"]), (0, "configured read\n"), report)
+        self.assertEqual(report["policy"]["timeout_ms"], 9000)
+        self.assertEqual(report["policy"]["allow_write"], [str(self.out.resolve())])
+        result = run("--profile=writer", self.script, env={**self.env, "PYNOX_CONFIG": str(config)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = run(
+            "--profile=missing", self.script, env={**self.env, "PYNOX_CONFIG": str(config)}
+        )
+        self.assertEqual(result.returncode, 125)
+        self.assertIn("Unknown profile", result.stderr)
+        result = run("--profile=writer", self.script, env=self.env)
+        self.assertIn("--profile needs a pynox.toml", result.stderr)
+
+    def test_configuration_inside_a_writable_path_is_refused(self):
+        (self.root / "pynox.toml").write_text('[permissions]\nallow_write = ["."]\n')
+        result = run(self.script, cwd=self.root, env=self.env)
+        self.assertEqual(result.returncode, 125)
+        self.assertIn("inside writable path", result.stderr)
+        (self.root / "pynox.toml").write_text('[permissions]\nallow_reads = ["data"]\n')
+        result = run(self.script, cwd=self.root, env=self.env)
+        self.assertEqual(result.returncode, 125)
+        self.assertIn("Invalid configuration", result.stderr)
+
+    def test_pool_profiles_and_limits(self):
+        config = self.root / "pool.toml"
+        config.write_text(
+            "[pool]\nworkers = 1\n"
+            '[pool.limits]\nallow_read = ["data"]\nallow_write = ["out"]\n'
+            'allow_network = false\ntimeout = "10s"\n'
+            '[profiles.analysis]\nallow_read = ["data"]\nallow_write = ["out"]\n'
+        )
+        requests = [
+            {"id": "profile", "profile": "analysis", "script": str(self.script)},
+            {"id": "bare", "script": str(self.script)},
+            {"id": "over-read", "code": "pass", "allow_read": [str(self.root)]},
+            {"id": "network", "code": "pass", "allow_network": True},
+            {"id": "slow", "code": "pass", "timeout": "11s"},
+            {"id": "within", "code": "pass", "timeout": "10s", "allow_write": [str(self.out)]},
+            {"id": "unknown-profile", "profile": "nope", "code": "pass"},
+        ]
+        result = run(
+            "pool",
+            f"--config={config}",
+            stdin="".join(json.dumps(r) + "\n" for r in requests),
+            env=self.env,
+        )
+        lines = [json.loads(line) for line in result.stdout.splitlines()]
+        ready, reports = lines[0], {r["id"]: r for r in lines[1:]}
+        self.assertEqual((ready["workers"], ready["profiles"]), (1, ["analysis"]), ready)
+        self.assertEqual(reports["profile"]["stdout"], "configured read\n", reports["profile"])
+        self.assertEqual(reports["bare"]["error"]["type"], "PermissionError")
+        for name in ("over-read", "network", "slow", "unknown-profile"):
+            self.assertEqual(reports[name]["error"]["type"], "RequestError", reports[name])
+            self.assertIn(
+                "limits" if name != "unknown-profile" else "profile",
+                reports[name]["error"]["message"],
+            )
+        self.assertEqual(reports["within"]["exit"], 0, reports["within"])
+        result = run(
+            "pool", stdin='{"id": 1, "profile": "analysis", "code": "pass"}\n', env=self.env
+        )
+        report = json.loads(result.stdout.splitlines()[1])
+        self.assertIn("--config", report["error"]["message"])
+
+
+class PoolTests(unittest.TestCase):
     def test_pool_optimization_is_present_in_every_job_and_stays_lazy(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -155,13 +346,10 @@ class ProductTests(unittest.TestCase):
             eager = root / "eager.py"
             eager.write_text("import sys, json\nprint('_pynox_json_runtime' in sys.modules)\n")
             requests = [{"script": str(path)} for path in (lazy, eager, lazy, eager)]
-            result = subprocess.run(
-                [runtime.BINARY, "pool", "--workers=1"],
-                input="".join(json.dumps(r) + "\n" for r in requests),
-                text=True,
-                capture_output=True,
-                timeout=30,
-                check=True,
+            result = run(
+                "pool",
+                "--workers=1",
+                stdin="".join(json.dumps(r) + "\n" for r in requests),
             )
             reports = [json.loads(line) for line in result.stdout.splitlines()][1:]
             self.assertEqual(
@@ -186,14 +374,7 @@ class ProductTests(unittest.TestCase):
             {"id": "both", "script": "a.py", "code": "print(1)"},
             {"id": "neither"},
         ]
-        result = subprocess.run(
-            [runtime.BINARY, "pool", "--workers=1"],
-            input="".join(json.dumps(r) + "\n" for r in requests),
-            text=True,
-            capture_output=True,
-            timeout=30,
-            check=True,
-        )
+        result = run("pool", "--workers=1", stdin="".join(json.dumps(r) + "\n" for r in requests))
         reports = {r["id"]: r for r in map(json.loads, result.stdout.splitlines()[1:])}
         self.assertEqual(reports["named"]["stdout"], "['step.py', 'a'] __main__ False\n")
         self.assertEqual(reports["named"]["exit"], 0, reports["named"])
@@ -206,7 +387,6 @@ class ProductTests(unittest.TestCase):
         self.assertEqual(reports["both"]["error"]["type"], "RequestError")
         self.assertEqual(reports["neither"]["error"]["type"], "RequestError")
 
-    @unittest.skipUnless(platform.system() == "Linux", "Linux sandbox backend")
     def test_network_permission_reaches_local_server(self):
         with socket.socket() as listener, tempfile.TemporaryDirectory() as temporary:
             listener.bind(("127.0.0.1", 0))
@@ -218,14 +398,8 @@ class ProductTests(unittest.TestCase):
                 f"with socket.create_connection({listener.getsockname()!r}) as s:\n"
                 "    s.sendall(b'pynox')\n"
             )
-            result = subprocess.run(
-                [runtime.BINARY, "sandbox", "--allow-network", script],
-                text=True,
-                capture_output=True,
-                timeout=10,
-            )
-            report = json.loads(result.stdout)
-            self.assertEqual(report["exit"], 0, report)
+            result = run("--allow-network", script)
+            self.assertEqual(result.returncode, 0, result.stderr)
             connection, _ = listener.accept()
             with connection:
                 self.assertEqual(connection.recv(32), b"pynox")

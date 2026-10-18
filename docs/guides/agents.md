@@ -124,9 +124,10 @@ For agents whose glue code should itself run isolated, pair Pynox with
 
 ## Patterns
 
-**One pool per permission profile.** A pool is cheap. Run one for "read the
-dataset, write the report" and another for "network allowed, no files" rather
-than deciding per call from model input.
+**Profiles instead of ad-hoc permissions.** Put the permission sets your
+application needs in `pynox.toml` as `[profiles.NAME]`, start the pool with
+`--config`, and pass `profile=` per call. `[pool.limits]` caps every request,
+so a bug in your tool code cannot widen access beyond what the operator set.
 
 **Preload what every task imports.** `PynoxPool(preload=["pandas"])` pays the
 import once in the template; each forked child starts with it loaded.

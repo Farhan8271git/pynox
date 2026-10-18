@@ -50,9 +50,10 @@ fn filesystem(policy: &Policy, python: &PythonInfo) -> Result<()> {
         | AccessFs::RemoveFile
         | AccessFs::RemoveDir;
     let mut readable = vec![python.stdlib.clone(), python.platstdlib.clone()];
-    if policy.source.is_none() {
+    if policy.source.is_none() && policy.module.is_none() {
         readable.push(policy.script.clone());
     }
+    readable.extend(policy.implicit_read.iter().cloned());
     readable.extend(python.site_packages.iter().filter(|p| p.exists()).cloned());
     // Dynamic extensions need the system shared libraries. These are part of the
     // trusted runtime, and are explicitly disclosed as implicit read permissions.

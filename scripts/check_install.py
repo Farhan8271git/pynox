@@ -46,14 +46,15 @@ def main():
         assert doctor["platform"] == platform_tag
         assert marker.read_text() == "another installed variant"
         prefix = subprocess.check_output(
-            [binary, "python", "-I", "-c", "import sys; print(sys.base_prefix)"],
+            [binary, "--no-sandbox", "-I", "-c", "import sys; print(sys.base_prefix)"],
             text=True,
         ).strip()
         assert Path(prefix).resolve().is_relative_to(root), prefix
-        subprocess.run([binary, str(ROOT / "examples/hello.py")], check=True)
+        subprocess.run([binary, "--no-sandbox", str(ROOT / "examples/hello.py")], check=True)
         if doctor["sandbox_supported"]:
+            subprocess.run([binary, str(ROOT / "examples/hello.py")], check=True)
             report = json.loads(
-                subprocess.check_output([binary, "sandbox", str(ROOT / "examples/hello.py")])
+                subprocess.check_output([binary, "--json", str(ROOT / "examples/hello.py")])
             )
             assert report["exit"] == 0 and "Hello from Pynox" in report["stdout"], report
         repeat = subprocess.run(command, env=env, capture_output=True)

@@ -117,9 +117,9 @@ pub fn install_optimizations() -> Result<()> {
     }
 }
 
-/// Run CPython's own command line, starting at argument `skip`.
-pub fn python(skip: usize) -> i32 {
-    match run_python(skip) {
+/// Run CPython's own command line with the given arguments, unrestricted.
+pub fn python(arguments: Vec<std::ffi::OsString>) -> i32 {
+    match run_python(arguments) {
         Ok(code) => code,
         Err(error) => {
             eprintln!("pynox: {error:#}");
@@ -128,9 +128,8 @@ pub fn python(skip: usize) -> i32 {
     }
 }
 
-fn run_python(skip: usize) -> Result<i32> {
+fn run_python(mut arguments: Vec<std::ffi::OsString>) -> Result<i32> {
     let info = python_info();
-    let mut arguments = std::env::args_os().skip(skip).collect::<Vec<_>>();
     arguments.insert(0, info.executable.clone().into_os_string());
     let args = arguments
         .iter()

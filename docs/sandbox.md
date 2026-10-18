@@ -1,10 +1,9 @@
 # Sandbox contract
 
-Sandboxing is opt-in: `pynox sandbox` runs one script and `pynox pool` runs
-tasks from a persistent pool, both with explicit permissions. The default
-`pynox script.py` mode runs like `python`, without a sandbox; a sandbox setup
-failure never falls back to it. The backend supports Linux glibc and musl and
-needs Landlock ABI >= 3 (kernel 6.2 or newer).
+The sandbox is the default: `pynox script.py` and every `pynox pool` task run
+under it with explicit permissions, and `--no-sandbox` is the only way out. A
+sandbox setup failure never falls back to unrestricted execution. The backend
+supports Linux glibc and musl and needs Landlock ABI >= 3 (kernel 6.2 or newer).
 
 Linux Landlock ABI >= 3 mediates reads, writes and truncation. Seccomp denies
 new processes/executables, host IPC, cross-process inspection/signals, metadata
@@ -13,8 +12,10 @@ including calls made through ctypes, not just Python wrappers.
 
 ## Granted capabilities
 
-- Script and CPython runtime directories are readable. Sibling files are not
-  implicitly granted. Runtime directories include their installed site-packages.
+- The script's directory and the CPython runtime directories are readable; for
+  `-m` the current directory is readable instead, and `-c` grants nothing. The
+  `implicit_read` field of a JSON result shows exactly what was granted this
+  way. Runtime directories include their installed site-packages.
 - System library directories `/lib`, `/lib64`, `/usr/lib`, `/usr/lib64`,
   loader cache and `/dev/urandom` are implicitly readable where present.
 - Additional read/write/package paths are explicit, existing canonical paths.

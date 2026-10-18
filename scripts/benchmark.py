@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 BINARY = ROOT / "target/release/pynox"
-MODES = ("cpython", "pynox", "sandbox", "pool")
+MODES = ("cpython", "no_sandbox", "pynox", "json", "pool")
 
 
 class Pool:
@@ -130,12 +130,13 @@ def main():
                         else:
                             if mode == "cpython":
                                 command = [python, str(script)]
-                            elif mode == "pynox":
-                                command = [str(BINARY), str(script)]
+                            elif mode == "no_sandbox":
+                                command = [str(BINARY), "--no-sandbox", str(script)]
                             else:
-                                command = [
-                                    str(BINARY),
-                                    "sandbox",
+                                command = [str(BINARY)]
+                                if mode == "json":
+                                    command.append("--json")
+                                command += [
                                     f"--allow-read={root}",
                                     f"--allow-write={root}",
                                     str(script),
@@ -147,7 +148,7 @@ def main():
                             duration = (time.perf_counter_ns() - start) / 1_000_000
                             assert result.returncode == 0 and not result.stderr, result
                             output = result.stdout
-                            if mode == "sandbox":
+                            if mode == "json":
                                 report = json.loads(output)
                                 assert report["exit"] == 0, report
                                 output = report["stdout"]
@@ -195,8 +196,11 @@ def main():
             "python_build": build,
             "modes": {
                 "cpython": "Stock CPython executable from the same distribution (static libpython)",
-                "pynox": "`pynox script.py`: embedded shared libpython, transparent optimizations",
-                "sandbox": "`pynox sandbox`: new supervised process, Landlock and seccomp, JSON result",
+                "no_sandbox": "`pynox --no-sandbox script.py`: embedded shared libpython, "
+                "transparent optimizations, no supervisor",
+                "pynox": "`pynox script.py`: the default; supervised sandboxed worker, "
+                "Landlock and seccomp, output passed through",
+                "json": "`pynox --json script.py`: as above with captured output and a JSON result",
                 "pool": "`pynox pool --workers=1`: request/response latency of a forked child "
                 "from a warm template, measured by the client",
             },

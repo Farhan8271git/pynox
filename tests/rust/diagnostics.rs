@@ -1,14 +1,13 @@
 use super::*;
-use clap::Parser;
+use crate::policy::Grants;
 use std::io::Cursor;
 
 fn policy() -> Policy {
-    let cli = Cli::try_parse_from([
-        "pynox",
-        concat!(env!("CARGO_MANIFEST_DIR"), "/examples/hello.py"),
-    ])
-    .unwrap();
-    Policy::from_cli(&cli, None).unwrap()
+    let program = Program::Script {
+        path: concat!(env!("CARGO_MANIFEST_DIR"), "/examples/hello.py").into(),
+        args: Vec::new(),
+    };
+    Policy::new(&Grants::default(), program, true).unwrap()
 }
 
 fn result(status: i32, timed_out: bool, report: &[u8], truncated: bool) -> Value {

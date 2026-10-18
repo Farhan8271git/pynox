@@ -1,7 +1,7 @@
 # Security scope
 
-Pynox's sandbox modes, `pynox sandbox` and `pynox pool`, enforce explicit
-capabilities using Linux Landlock and seccomp. The intended use is controlling Python automation and resource
+Pynox's sandbox, the default for `pynox script.py` and for every `pynox pool`
+task, enforces explicit capabilities using Linux Landlock and seccomp. The intended use is controlling Python automation and resource
 usage. It is not a VM or a complete boundary against hostile native code.
 
 Filesystem contents, metadata visibility, network grants, inherited runtime
@@ -9,7 +9,7 @@ reads and limits are described in [the sandbox contract](docs/sandbox.md).
 Policy applies to Python and native extensions through kernel mediation.
 Unsupported or partially enforced Landlock configuration aborts execution.
 
-The default `pynox script.py` mode runs without a sandbox. Trusted pool preload runs before
+`pynox script.py` is sandboxed by default; `--no-sandbox` is the explicit unrestricted mode. Trusted pool preload runs before
 sandboxing; only operator-controlled modules belong there. No task may request
 preload, and writable task grants may not overlap preloaded runtime paths.
 Native extensions remain subject to their own fork/thread safety requirements.

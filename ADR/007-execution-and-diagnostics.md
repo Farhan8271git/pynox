@@ -2,38 +2,46 @@
 
 ## Status
 
-Accepted — 2026-10-17.
+Accepted — 2026-10-17. Revised 2026-10-18 with passthrough output.
 
 ## Context
 
-Ordinary Python tooling expects stdout/stderr, CLI switches and exit codes.
+Ordinary tooling expects stdout/stderr, command-line switches and exit codes.
 Agents need bounded machine-readable results with error locations and the
-effective policy. Mixing the two invisibly is confusing, and wrapping every
-Python invocation in JSON made the runtime unusable as `python`.
+effective policy. Earlier revisions tied the JSON result to the sandbox, which
+forced a choice between a usable terminal tool and an isolated one.
 
 ## Decision
 
-`pynox [PYTHON_OPTIONS] SCRIPT [ARGS]`, `-c` and `-m` are CPython's own
-command line with Pynox's optimizations installed; stdout, stderr and the
-exit status are Python's. `pynox python ...` is an alias. Anything that is
-not a Pynox command is passed to CPython.
+Output format and isolation are independent. By default the sandboxed task's
+stdin, stdout and stderr are the user's; exceptions print Python's traceback,
+followed by `pynox: <hint>` when a permission or memory hint applies; launcher,
+timeout and signal failures print one `pynox:` line. Exit codes are Python's,
+plus 124 for timeout, 125 for launcher or setup failure and 2 for invalid
+Pynox flags.
 
-`pynox sandbox` and `pynox pool` return one JSON result per task with
-captured streams, exit, duration, policy and a structured error carrying type,
-message, script location and actionable permission or limit hints. Pool
-responses add request IDs. `pynox doctor` reports runtime metadata, a
-Landlock probe and `sandbox_supported` separately from `runtime_supported`.
+`--json` captures both streams, bounded by `--max-output`, and prints one JSON
+result: `exit`, `stdout`, `stderr`, truncation flags, duration, runtime and the
+effective policy including implicit grants, and an `error` with type, message,
+file, line and hint. The pool returns the same shape plus request IDs.
+`--no-sandbox` hands the command line to CPython unchanged. Pynox's own flags
+are long options CPython does not use, so they can precede Python's.
+
+In the sandbox the program is a script, `-c` or `-m`; isolation and buffering
+options are accepted as no-ops, other interpreter options are refused with a
+pointer to `--no-sandbox`. `pynox doctor` reports runtime metadata and a
+Landlock probe with `sandbox_supported` separate from `runtime_supported`.
 
 ## Alternatives considered
 
-- JSON on every invocation: breaks conventional CLI integration.
-- Tracebacks only: poor automation diagnostics for a model to act on.
-- Treat task-generated diagnostic JSON as a security audit: untrustworthy,
-  since the task can write to its own report channel.
+- JSON on every invocation: unusable as a terminal tool.
+- Tracebacks only: a model cannot act on them reliably.
+- Support every CPython option inside the sandbox: each needs its own
+  isolated-configuration mapping; the three program forms cover scripts,
+  tests and tools.
 
 ## Consequences
 
-Default execution has no sandbox, as with `python`. The sandbox launch
-interface is an explicit execution contract, not byte-for-byte CPython CLI.
-Partial output before a `RecursionError` differs by the runner's frame.
-Passthrough stdout for `pynox sandbox` is a possible later addition.
+Passthrough tracebacks omit the launcher's frame but otherwise match Python.
+Partial output before a `RecursionError` differs by that frame. The diagnostic
+channel is written by the task and is not an audit log.

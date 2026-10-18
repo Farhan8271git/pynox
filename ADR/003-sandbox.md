@@ -1,47 +1,60 @@
-# ADR 003: Opt-in Linux capability sandbox
+# ADR 003: Sandbox by default, with explicit permissions
 
 ## Status
 
-Accepted — 2026-10-17.
+Accepted — 2026-10-17. Revised 2026-10-18: the sandbox became the default
+again once its output was decoupled from the JSON result (ADR 007).
 
 ## Context
 
 Controlled execution is the product's proof point for agents. Python-level
 replacement of `open` cannot enforce policy for native extensions or ctypes.
-General frameworks need threads and asyncio, which an indiscriminate socket
-ban broke in the original prototype. The goal is controlled automation, not a
-claim of complete hostile-code containment. Making the sandbox the default
-command made `pynox hello.py` print JSON instead of `Hello` and hid the
-runtime behind an agent-only interface.
+The first design made the sandbox the only way to run a file and printed a
+JSON result, so `pynox hello.py` did not print `Hello`; the second made plain
+Python the default and hid the sandbox behind a subcommand. Both were the
+wrong trade: the output format was coupled to isolation. Deno showed that a
+runtime can be secure by default and still feel like the ordinary tool when
+permissions are explicit and the terminal behaves normally.
 
 ## Decision
 
-The sandbox is opt-in: `pynox sandbox` and `pynox pool` apply Landlock
-ABI >= 3, seccomp and resource limits; `pynox script.py` runs like `python`.
-File, environment and IPv4/IPv6 grants are explicit. Unsupported or partial
-sandbox setup fails closed and never falls back to unsandboxed execution.
+`pynox script.py`, `pynox -c CODE` and `pynox -m MODULE` run inside the
+sandbox with Python's own stdout, stderr, stdin and exit status. Permissions
+are deny by default and granted explicitly by flags or by `pynox.toml`
+(ADR 012). One implicit grant exists: the script's directory is readable, so
+sibling imports work; `-m` makes the current directory readable instead,
+mirroring `sys.path[0]`. `-c` grants nothing. `--no-sandbox` is the explicit
+way to run CPython's unrestricted command line, including interpreter options
+the sandbox does not support.
 
-Allow unnamed AF_UNIX stream socketpairs for asyncio wakeups while denying
-host Unix sockets. Network stays denied unless granted and never enables
-subprocesses. Python and native extensions share the same kernel policy.
+The backend is Landlock ABI >= 3, seccomp and resource limits; unsupported
+or partial setup fails closed with a message pointing at `--no-sandbox`, and
+never falls back silently. Allow unnamed AF_UNIX socketpairs for asyncio while
+denying host Unix sockets; network stays denied unless granted and never
+enables subprocesses. Python and native extensions share the kernel policy.
 Cold execution applies policy before CPython initialization; pool templates
-contain only trusted setup before each child's policy. Sandboxed workers run
-in UTF-8 mode, matching stock CPython under the launcher's `C.UTF-8`.
+hold only trusted setup. Workers run in UTF-8 mode like stock CPython under
+`C.UTF-8`.
 
 ## Alternatives considered
 
-- Sandbox by default: safer per command, but it made the runtime unusable as
-  a drop-in `python` and hid the optimizations from everyone.
-- Monkeypatch file/network APIs: does not constrain native calls.
-- Silent fallback on unsupported kernels: violates the policy contract.
-- Namespaces, containers or microVMs in v0.1: stronger boundaries with
-  separate portability and operational costs; candidates for later layers.
+- Plain Python by default with an opt-in subcommand: compatible, but the
+  product's differentiator was invisible and every agent integration had to
+  remember to ask for it.
+- Deny the script's directory too: stricter, and `import utils` fails on the
+  first run; the directory of the file you chose to execute is the smallest
+  grant that keeps ordinary scripts working.
+- Interactive permission prompts: good terminal experience; deferred until
+  the non-interactive contract is stable.
+- Namespaces, containers or microVMs: stronger boundaries with separate
+  operational costs; candidates for later layers, not replacements.
 
 ## Consequences
 
-Linux only, kernel 6.2 or newer for ABI 3; older kernels such as current AWS
-Lambda guests cannot run the sandbox until an explicitly weaker level is
-designed and documented. Sandboxed tasks need explicit sibling imports,
-writable paths and network grants. The contract discloses implicit runtime
-reads, metadata visibility, persistent writes and limits. Domain allowlists,
-subprocess grants and private filesystems remain future work.
+The default costs a supervised worker: about 2.5 ms over `python` on a tiny
+script, measured, and documented rather than hidden. Scripts that read or
+write outside their directory need grants, and `pynox.toml` exists so a
+project states them once. Linux kernel 6.2 or newer is required for the
+default mode; older kernels must use `--no-sandbox` explicitly. Metadata
+visibility, persistent writes and the absence of domain allowlists remain
+disclosed limits. Full hostile-code containment is not claimed.

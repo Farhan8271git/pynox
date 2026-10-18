@@ -9,10 +9,11 @@
 
 **The Python runtime for agents. Run the code they write, fast and under control.**
 
-Pynox runs ordinary Python on **CPython** with a per-task kernel sandbox,
-a warm worker pool for many short calls, structured results a model can act
-on, and native optimizations applied transparently where they measurably
-help. It is also just a Python: `pynox app.py` works like `python app.py`.
+Pynox runs ordinary Python on **CPython**, sandboxed by default: each run gets
+only the files, network, time and memory you grant, enforced by the kernel.
+A warm worker pool answers agent tool calls in milliseconds with structured
+results a model can act on, and native optimizations apply transparently where
+they measurably help. At the terminal it still feels like `python`.
 No framework, no `import pynox`.
 
 > 🚧 **Pre-alpha (0.1.0).** Ready to try, experiment and contribute.
@@ -20,8 +21,8 @@ No framework, no `import pynox`.
 
 | Platform | Architectures | Modes |
 | --- | --- | --- |
-| Linux glibc 2.28+ | x86_64, ARM64 | `pynox`, `pynox sandbox`, `pynox pool` |
-| Linux musl 1.2+ / Alpine | x86_64, ARM64 | `pynox`, `pynox sandbox`, `pynox pool` |
+| Linux glibc 2.28+ | x86_64, ARM64 | `pynox` (sandboxed), `--no-sandbox`, `pynox pool` |
+| Linux musl 1.2+ / Alpine | x86_64, ARM64 | `pynox` (sandboxed), `--no-sandbox`, `pynox pool` |
 
 Pynox is **Linux only** for now; the sandbox is built on Landlock and seccomp.
 On macOS, use a Linux container or VM. See [platforms](docs/distribution.md).
@@ -29,7 +30,7 @@ On macOS, use a Linux container or VM. See [platforms](docs/distribution.md).
 ## Why Pynox?
 
 - **Built for agent loops** — Send code, get back `exit`, output, a structured error with type, line and a hint, in a few milliseconds. The host chooses each task's permissions; the model only writes Python.
-- **Kernel sandbox, no containers** — Landlock and seccomp per task: which files, environment variables and network a job gets, plus time, memory and output limits. Fails closed.
+- **Secure by default, no containers** — Landlock and seccomp on every run: which files, environment variables and network a program gets, plus time, memory and output limits. Grants come from flags or a `pynox.toml`. Fails closed; `--no-sandbox` is the explicit way out.
 - **Warm pool** — A trusted CPython template forks a clean child per task. Small tasks answer faster than a new `python` process starts; preloaded libraries cost nothing per call.
 - **Real Python** — The whole ecosystem, every CPython option, unchanged code. Pairs with [Monty](https://github.com/pydantic/monty) for glue code that needs snapshots.
 - **Faster where it counts** — Native paths for common operations, always on, each measured against stock CPython and falling back to CPython's behavior when a call is not eligible.
@@ -62,11 +63,26 @@ pynox hello.py
 # Hello from Pynox!
 ```
 
-`-c`, `-m` and every other CPython option work the same way:
+That ran in the sandbox. Output, exit code and arguments are Python's; the
+script could read its own directory and the standard library, nothing else.
+Ask for more and you get Python's traceback plus a hint:
 
 ```bash
-pynox -c 'import sys; print(sys.version)'
-pynox -m json.tool data.json
+echo "print(open('/etc/hostname').read())" > probe.py
+pynox probe.py
+# Traceback (most recent call last): ...
+# PermissionError: [Errno 13] Permission denied: '/etc/hostname'
+# pynox: For files, grant the specific path with --allow-read/--allow-write. ...
+pynox --allow-read=/etc/hostname probe.py
+```
+
+`-c`, `-m` and a project-wide `pynox.toml` work the same way; `--no-sandbox`
+gives you CPython's unrestricted command line, REPL and options included:
+
+```bash
+pynox -m pytest -q
+pynox --json --allow-write=out job.py     # one structured result for automation
+pynox --no-sandbox -O app.py
 ```
 
 ## What about speed?
@@ -78,46 +94,43 @@ imports `json`, so other programs pay nothing.
 
 Measured on this project's Linux ARM64 host with CPython 3.11, end-to-end p50:
 
-| Workload | CPython | `pynox` | `pynox pool` |
-| --- | ---: | ---: | ---: |
-| Tiny script | 7.68 ms | 8.09 ms | 4.68 ms |
-| JSON pipeline, 3.89 MiB | 153.80 ms | 78.50 ms | 75.75 ms |
+| Workload | CPython | `pynox` (sandboxed) | `pynox --no-sandbox` | `pynox pool` |
+| --- | ---: | ---: | ---: | ---: |
+| Tiny script | 7.45 ms | 10.06 ms | 7.67 ms | 4.47 ms |
+| JSON pipeline, 3.89 MiB | 153.63 ms | 81.52 ms | 78.46 ms | 74.48 ms |
 
-Python loops are still CPython loops; Pynox does not make the interpreter
-itself faster. The optimized path uses extra memory for large outputs. See
-[measurements, limits and the startup budget](docs/performance.md).
+The sandbox costs about 2.5 ms per run for the supervised worker and kernel
+policy. Python loops are still CPython loops; Pynox does not make the
+interpreter itself faster. The optimized path uses extra memory for large
+outputs. See [measurements, limits and the startup budget](docs/performance.md).
 
-## Sandbox a script
+## Grant permissions once with `pynox.toml`
 
-On Linux, `pynox sandbox` runs a script with only the access you grant and
-returns one JSON result. This included example uses ordinary `open`,
-`json.load` and `json.dump`:
+Flags work for one run. A project states its permissions in a `pynox.toml`
+in the directory you run from, or in a file passed with `--config`:
 
-```bash
-mkdir -p examples/out
-pynox sandbox \
-  --allow-read=examples/data \
-  --allow-write=examples/out \
-  --timeout=5s \
-  examples/json_open.py examples/data/orders.json examples/out/orders.json
+```toml
+[permissions]
+allow_read = ["data"]
+allow_write = ["out"]
+timeout = "10s"
+
+[profiles.fetch]
+allow_network = true
+allow_env = ["API_KEY"]
 ```
 
-The result has `stdout`, the exit status, timing and the permissions used.
-When a script fails, it includes the error type, message and script location
-when available, plus a hint for permission and limit errors. Create output
-directories first; read and write access are separate grants. Sibling imports
-and third-party packages also need access; see the [command reference](docs/usage.md).
-
-For a script that calls an API, allow network access and pass its API key:
-
 ```bash
-pynox sandbox --allow-network --allow-env=API_KEY app.py
+pynox job.py                      # data readable, out writable
+pynox --profile=fetch sync.py     # plus network and the API key
 ```
 
-Network access is off by default. The flag enables IPv4/IPv6; host Unix sockets
-and subprocesses stay blocked. The sandbox requires **Landlock ABI 3 or newer**
-and refuses to run if the kernel cannot enforce it. It never falls back to
-unrestricted execution. See the [sandbox guide](docs/sandbox.md).
+The file beside the script is never consulted, only the one where you run or
+the one you name, so a program cannot widen its own permissions. Reads and
+writes are separate grants; network is off by default and never enables
+subprocesses. The sandbox needs **Landlock ABI 3** (Linux 6.2+) and refuses to
+run without it. See the [command reference](docs/usage.md) and the
+[sandbox guide](docs/sandbox.md).
 
 ## Give an agent a Python tool
 
@@ -151,8 +164,9 @@ For files, grant the specific path with --allow-read/--allow-write. ...
 
 Register `run_python` with your framework's tool decorator and you are done.
 Under the hood this is `pynox pool --workers=2` speaking JSONL: one request per
-line with `code`, permissions and limits; one result per line with `id`,
-`exit`, `stdout`, `error` and timing. Each job runs in a fresh child forked
+line with `code`, a `profile` or permissions and limits, capped by the
+operator's `[pool.limits]`; one result per line with `id`, `exit`, `stdout`,
+`error` and timing. Each job runs in a fresh child forked
 from a warm template, so a small task answers in about 5 ms. Python globals
 are not shared between jobs; authorized file writes persist. See the
 [agents guide](docs/guides/agents.md) and the [pool protocol](docs/guides/pool.md).

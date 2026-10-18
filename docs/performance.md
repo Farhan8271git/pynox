@@ -72,28 +72,29 @@ separated from local Python work.
 
 ## Pynox 0.1.0: local Linux aarch64 measurement
 
-Measured on 2026-10-17 with CPython 3.11.17, two CPU cores, seven shuffled
-rounds per combination and one discarded warmup. All 140 measured executions
+Measured on 2026-10-18 with CPython 3.11.17, two CPU cores, seven shuffled
+rounds per combination and one discarded warmup. All 175 measured executions
 validated their outputs. Each number is end-to-end p50 in milliseconds. The
 pool column is the request/response latency seen by a client of
 `pynox pool --workers=1`, whose template was started once before measuring.
 
-| Workload | CPython | `pynox` | `pynox sandbox` | `pynox pool` |
-| --- | ---: | ---: | ---: | ---: |
-| Tiny script | 7.68 | 8.09 | 10.87 | 4.68 |
-| Python CPU | 16.95 | 17.71 | 20.53 | 14.07 |
-| Async tasks | 39.88 | 40.85 | 43.55 | 36.68 |
-| JSON, 32 records | 13.40 | 13.78 | 16.74 | 10.68 |
-| JSON, 32,768 records | 153.80 | 78.50 | 82.94 | 75.75 |
+| Workload | CPython | `--no-sandbox` | `pynox` (default) | `--json` | `pynox pool` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Tiny script | 7.45 | 7.67 | 10.06 | 10.13 | 4.47 |
+| Python CPU | 16.84 | 17.44 | 20.02 | 20.12 | 13.99 |
+| Async tasks | 39.58 | 39.98 | 41.69 | 41.54 | 36.07 |
+| JSON, 32 records | 13.03 | 13.48 | 15.94 | 16.21 | 10.41 |
+| JSON, 32,768 records | 153.63 | 78.46 | 81.52 | 81.09 | 74.48 |
 
 The large JSON input is 3.89 MiB. The pipeline includes reading, Python
-transformation, encoding and writing: 1.96× faster than stock CPython in the
-default mode and 1.85× in the sandbox. Small programs stay within about 0.4 ms
-of CPython in the default mode. The sandbox adds about 3 ms per task for a new
-supervised process, kernel policy and the JSON result. The pool, which keeps a
-trusted CPython template warm and forks a fresh child per task, answers small
-tasks faster than a new `python` process starts. None of this demonstrates a
-faster interpreter: Python loops remain CPython loops.
+transformation, encoding and writing: 1.96× faster than stock CPython without
+the sandbox and 1.88× with it. Without the sandbox, small programs stay within
+about 0.3 ms of CPython. The default sandboxed mode adds about 2.5 ms per run
+for a supervised worker and kernel policy; capturing output for `--json` costs
+nothing measurable on top. The pool, which keeps a trusted CPython template
+warm and forks a fresh child per task, answers small tasks faster than a new
+`python` process starts. None of this demonstrates a faster interpreter:
+Python loops remain CPython loops.
 
 The filesystem is warm and writes do not use fsync. Memory was not measured
 in this run. Seven samples make nearest-rank p95 equal to the maximum; raw

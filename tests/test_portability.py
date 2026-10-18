@@ -25,7 +25,9 @@ class PortabilityTests(unittest.TestCase):
             "    return sqlite3.connect(':memory:').execute('select 42').fetchone()[0]\n"
             "print(json.dumps({'result': asyncio.run(main())}))\n"
         )
-        output = subprocess.check_output([runtime.BINARY, "-I", "-c", source], text=True)
+        output = subprocess.check_output(
+            [runtime.BINARY, "--no-sandbox", "-I", "-c", source], text=True
+        )
         self.assertEqual(json.loads(output), {"result": 42})
 
     @unittest.skipUnless(
@@ -40,6 +42,6 @@ class PortabilityTests(unittest.TestCase):
             "print(adapter.dump_json(adapter.validate_python(['1', '2'])).decode())\n"
         )
         output = subprocess.check_output(
-            [runtime.BINARY, "python", "-I", "-S", "-c", source], text=True
+            [runtime.BINARY, "--no-sandbox", "-I", "-S", "-c", source], text=True
         )
         self.assertEqual(json.loads(output), [1, 2])

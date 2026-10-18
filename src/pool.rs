@@ -1,12 +1,13 @@
 pub use crate::forkserver::template_main;
 use crate::{
     capture,
+    config::Config,
     forkserver::Template,
-    policy::{parse_duration, parse_memory, Cli, Policy},
+    policy::{Grants, Policy, Program},
     preload::TemplateConfig,
     worker::Job,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -31,24 +32,29 @@ mod tests;
     about = "Persistent CPython pool; one JSON request per stdin line"
 )]
 pub struct PoolCli {
-    /// Maximum concurrent executions; each slot has a clean CPython template.
-    #[arg(long, default_value = "2", value_parser = clap::value_parser!(u16).range(1..=32))]
-    workers: u16,
+    /// Maximum concurrent executions; each slot has a clean CPython template (default 2).
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..=32))]
+    workers: Option<u16>,
     /// Preload trusted modules before forking jobs (comma-separated, repeatable).
     #[arg(long, value_delimiter = ',')]
     preload: Vec<String>,
     /// Trusted package directory, readable by every job in this pool.
     #[arg(long, value_name = "PATH")]
     package_dir: Vec<PathBuf>,
+    /// pynox.toml with [pool] settings, [pool.limits] and [profiles]
+    /// (default: $PYNOX_CONFIG, then ./pynox.toml).
+    #[arg(long, value_name = "PATH")]
+    config: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
     #[serde(default)]
-    allow_network: bool,
-    #[serde(default)]
     id: Value,
+    /// Named profile from the pool's configuration; request fields widen it.
+    #[serde(default)]
+    profile: Option<String>,
     /// Path of a script file to run. Exactly one of `script` and `code` is required.
     #[serde(default)]
     script: Option<PathBuf>,
@@ -61,6 +67,8 @@ struct Request {
     #[serde(default)]
     args: Vec<String>,
     #[serde(default)]
+    allow_network: Option<bool>,
+    #[serde(default)]
     allow_read: Vec<PathBuf>,
     #[serde(default)]
     allow_write: Vec<PathBuf>,
@@ -68,54 +76,60 @@ struct Request {
     package_dirs: Vec<PathBuf>,
     #[serde(default)]
     env: BTreeMap<String, String>,
-    #[serde(default = "default_timeout")]
-    timeout: String,
-    #[serde(default = "default_memory")]
-    memory: String,
-    #[serde(default = "default_output")]
-    max_output: u64,
-}
-
-fn default_timeout() -> String {
-    "5s".into()
-}
-fn default_memory() -> String {
-    "512m".into()
-}
-fn default_output() -> u64 {
-    65_536
+    #[serde(default)]
+    timeout: Option<String>,
+    #[serde(default)]
+    memory: Option<String>,
+    #[serde(default)]
+    max_output: Option<u64>,
 }
 
 impl Request {
-    fn job(self) -> Result<Job> {
-        let (program, source) = match (self.script, self.code) {
+    fn job(self, config: Option<&Config>) -> Result<Job> {
+        let program = match (self.script, self.code) {
             (Some(script), None) => {
                 if self.name.is_some() {
                     bail!("name applies to code requests only");
                 }
-                (script.into_os_string(), None)
+                Program::Script {
+                    path: script.into_os_string(),
+                    args: self.args,
+                }
             }
-            (None, Some(code)) => (
-                self.name.unwrap_or_else(|| "<code>".into()).into(),
-                Some(code),
-            ),
+            (None, Some(source)) => {
+                let label = self.name.unwrap_or_else(|| "<code>".into());
+                Program::Code {
+                    source,
+                    argv0: label.clone(),
+                    label,
+                    args: self.args,
+                }
+            }
             (Some(_), Some(_)) => bail!("Use either script or code, not both"),
             (None, None) => bail!("Request needs script or code"),
         };
-        let cli = Cli {
-            allow_network: self.allow_network,
-            command: std::iter::once(program)
-                .chain(self.args.into_iter().map(Into::into))
-                .collect(),
+        let mut grants = match &self.profile {
+            Some(profile) => config
+                .context("profile needs a pool started with --config")?
+                .profile(profile)?
+                .clone(),
+            None => Grants::default(),
+        };
+        grants = grants.overlay(&Grants {
             allow_read: self.allow_read,
             allow_write: self.allow_write,
-            package_dir: self.package_dirs,
             allow_env: self.env.keys().cloned().collect(),
-            timeout: parse_duration(&self.timeout).map_err(|e| anyhow!(e))?,
-            memory: parse_memory(&self.memory).map_err(|e| anyhow!(e))?,
+            package_dirs: self.package_dirs,
+            allow_network: self.allow_network,
+            timeout: self.timeout,
+            memory: self.memory,
             max_output: self.max_output,
-        };
-        let policy = Policy::from_cli(&cli, source)?;
+        });
+        // Requests are capped by [pool.limits]; the operator sets the ceiling.
+        let policy = Policy::new(&grants, program, true)?;
+        if let Some(config) = config {
+            config.check_limits(&policy)?;
+        }
         if self.env.values().any(|value| value.contains('\0')) {
             bail!("Environment values cannot contain NUL");
         }
@@ -153,14 +167,30 @@ fn failure(id: Value, kind: &str, message: String) -> Value {
 }
 
 pub fn run(options: PoolCli) -> Result<()> {
-    let config = Arc::new(TemplateConfig::new(options.preload, options.package_dir)?);
+    let settings: Arc<Option<Config>> = Arc::new(Config::discover(options.config.as_deref())?);
+    let section = settings.as_ref().as_ref().map(|c| &c.pool);
+    let workers = options
+        .workers
+        .or(section.and_then(|p| p.workers))
+        .unwrap_or(2);
+    if !(1..=32).contains(&workers) {
+        bail!("pool.workers must be between 1 and 32");
+    }
+    let preload = if options.preload.is_empty() {
+        section.map(|p| p.preload.clone()).unwrap_or_default()
+    } else {
+        options.preload
+    };
+    let mut package_dirs = options.package_dir;
+    package_dirs.extend(section.iter().flat_map(|p| p.package_dirs.iter().cloned()));
+    let config = Arc::new(TemplateConfig::new(preload, package_dirs)?);
     let writer = Arc::new(Mutex::new(std::io::stdout()));
     // Templates are separate exec'd processes. The threaded supervisor is
     // never forked and cannot copy previous requests/secrets into a new job.
-    let templates = (0..options.workers)
+    let templates = (0..workers)
         .map(|_| Template::start(&config))
         .collect::<Result<Vec<_>>>()?;
-    let (sender, receiver) = mpsc::sync_channel::<Pending>(options.workers as usize * 2);
+    let (sender, receiver) = mpsc::sync_channel::<Pending>(workers as usize * 2);
     let receiver = Arc::new(Mutex::new(receiver));
     let threads: Vec<_> = templates
         .into_iter()
@@ -168,6 +198,7 @@ pub fn run(options: PoolCli) -> Result<()> {
             let receiver = Arc::clone(&receiver);
             let writer = Arc::clone(&writer);
             let config = Arc::clone(&config);
+            let settings = Arc::clone(&settings);
             thread::spawn(move || -> Result<()> {
                 let mut slot = Some(template);
                 loop {
@@ -176,10 +207,14 @@ pub fn run(options: PoolCli) -> Result<()> {
                         Err(_) => break,
                     };
                     let queued_us = pending.received.elapsed().as_micros();
-                    let job = pending.request.job().and_then(|mut job| {
-                        config.apply_to_job(&mut job.policy)?;
-                        Ok(job)
-                    });
+                    let job =
+                        pending
+                            .request
+                            .job(settings.as_ref().as_ref())
+                            .and_then(|mut job| {
+                                config.apply_to_job(&mut job.policy)?;
+                                Ok(job)
+                            });
                     let mut result = match job {
                         Err(error) => {
                             failure(pending.id.clone(), "RequestError", format!("{error:#}"))
@@ -221,8 +256,11 @@ pub fn run(options: PoolCli) -> Result<()> {
         .collect();
     emit(
         &writer,
-        &json!({"event": "ready", "workers": options.workers, "runtime": "pynox",
-            "preloaded_modules": config.modules, "package_dirs": config.package_dirs}),
+        &json!({"event": "ready", "workers": workers, "runtime": "pynox",
+            "preloaded_modules": config.modules, "package_dirs": config.package_dirs,
+            "config": settings.as_ref().as_ref().map(|c| c.path.clone()),
+            "profiles": settings.as_ref().as_ref()
+                .map(|c| c.profiles.keys().cloned().collect::<Vec<_>>()).unwrap_or_default()}),
     )?;
     let input_result = (|| -> Result<()> {
         let mut input = std::io::stdin().lock();

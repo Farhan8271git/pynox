@@ -55,12 +55,14 @@ class RuntimeTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.secret = self.root / "secret"
         self.secret.write_text("private fixture")
-        self.script = self.root / "main.py"
+        # The script's own directory is implicitly readable; keep the secret above it.
+        (self.root / "app").mkdir()
+        self.script = self.root / "app" / "main.py"
 
     def run_code(self, code, *flags, args=(), env=None, pass_fds=(), preexec_fn=None):
         self.script.write_text(textwrap.dedent(code))
         completed = subprocess.run(
-            [str(BINARY), "sandbox", *map(str, flags), str(self.script), *args],
+            [str(BINARY), "--json", *map(str, flags), str(self.script), *args],
             text=True,
             capture_output=True,
             timeout=15,
@@ -92,11 +94,17 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(output[0], ["--flag", "two words"])
         self.assertEqual(output[2], 42)
 
-    def test_script_does_not_grant_directory_access(self):
+    def test_script_grants_its_own_directory_and_nothing_above_it(self):
+        (self.script.parent / "sibling.txt").write_text("next to the script")
+        result = self.run_code(f"print(open({str(self.script.parent / 'sibling.txt')!r}).read())")
+        self.assertEqual(result["stdout"], "next to the script\n", result)
+        self.assertEqual(result["policy"]["implicit_read"], [str(self.script.parent.resolve())])
         result = self.run_code(f"open({str(self.secret)!r}).read()")
         self.assert_denied(result)
         self.assertEqual(result["error"]["file"], str(self.script))
         self.assertEqual(result["error"]["line"], 1)
+        result = self.run_code(f"open({str(self.script.parent / 'new.txt')!r}, 'w')")
+        self.assert_denied(result)
 
     def test_script_arguments_cannot_grant_runtime_permissions(self):
         args = [
