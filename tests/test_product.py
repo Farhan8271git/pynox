@@ -441,7 +441,8 @@ class FileSizeLimitTests(unittest.TestCase):
                 '[pool]\nworkers = 1\n[pool.limits]\nallow_write = ["out"]\nmax_file_size = "64k"\n'
             )
             target = root / "out" / "f.bin"
-            write = f"open({str(target)!r}, 'wb').write(b'x' * 100000)"
+            # CPython 3.14+ may defer the error from a buffered write to close().
+            write = f"with open({str(target)!r}, 'wb') as f:\n    f.write(b'x' * 100000)"
             requests = [
                 {"id": "default", "code": write, "allow_write": [str(root / "out")]},
                 {"id": "over", "code": "pass", "max_file_size": "1m"},

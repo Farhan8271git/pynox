@@ -61,7 +61,9 @@ native libraries may handle errno differently.
 
 Wall timeout is enforced by the supervisor. Address-space, CPU, core dump,
 descriptor and optional per-file size limits apply in the child; a write past
-`max_file_size` fails with `EFBIG` as an `OSError`. There is no total disk
+`max_file_size` fails with `EFBIG` as an `OSError`; with buffered files,
+CPython 3.14 and newer may raise it when the file is closed rather than at
+the `write` call. There is no total disk
 quota: many files under the limit can still fill a writable directory.
 Captured output is bounded and excess is
 drained, avoiding unbounded supervisor memory. Address space is not physical
