@@ -48,7 +48,7 @@ class DefaultModeTests(unittest.TestCase):
         self.assertEqual((result.returncode, result.stdout), (7, "['-c', 'one'] __main__\n"))
         result = run("-m", "json.tool", "--help")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("usage: python -m json.tool", result.stdout)
+        self.assertRegex(result.stdout, r"usage: python[0-9.]* -m json.tool")
 
     def test_sandbox_applies_with_traceback_and_hint_on_stderr(self):
         script = self.write("probe.py", "open('/etc/passwd').read()\n")
