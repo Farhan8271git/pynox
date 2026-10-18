@@ -65,18 +65,35 @@ fn configuration_inside_a_writable_path_is_rejected() {
     assert!(parse("[permissions]\nallow_write = [\"examples\"]\n").is_ok());
 }
 
+/// A scratch tree with `data/` and `out/`; `examples/out` is not in the checkout.
+fn scratch() -> PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "pynox-config-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(root.join("data")).unwrap();
+    std::fs::create_dir_all(root.join("out")).unwrap();
+    root.canonicalize().unwrap()
+}
+
 #[test]
 fn pool_limits_cap_every_request_dimension() {
-    let config = parse(
+    let root = scratch();
+    let config = Config::parse(
         r#"
 [pool.limits]
-allow_read = ["examples"]
-allow_write = ["examples/out"]
+allow_read = ["data"]
+allow_write = ["out"]
 allow_network = false
 timeout = "10s"
 memory = "1g"
 max_output = 4096
 "#,
+        &root.join("pynox.toml"),
     )
     .unwrap();
     let code = || Program::Code {
@@ -86,8 +103,8 @@ max_output = 4096
         args: Vec::new(),
     };
     let within = Grants {
-        allow_read: vec![root().join("examples/data")],
-        allow_write: vec![root().join("examples/out")],
+        allow_read: vec![root.join("data")],
+        allow_write: vec![root.join("out")],
         timeout: Some("10s".into()),
         memory: Some("1g".into()),
         max_output: Some(4096),
@@ -98,15 +115,15 @@ max_output = 4096
         .unwrap();
     for exceeding in [
         Grants {
-            allow_read: vec![root()],
+            allow_read: vec![root.clone()],
             ..Grants::default()
         },
         Grants {
-            allow_write: vec![root().join("examples")],
+            allow_write: vec![root.join("data")],
             ..Grants::default()
         },
         Grants {
-            package_dirs: vec![root().join("examples")],
+            package_dirs: vec![root.join("data")],
             ..Grants::default()
         },
         Grants {
@@ -137,4 +154,5 @@ max_output = 4096
     unlimited
         .check_limits(&Policy::new(&wide, code(), true).unwrap())
         .unwrap();
+    std::fs::remove_dir_all(root).unwrap();
 }
