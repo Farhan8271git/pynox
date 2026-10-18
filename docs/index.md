@@ -25,6 +25,17 @@ them:
 
 `--no-sandbox` is the plain interpreter whenever you need it.
 
+## What you can build
+
+| Agent | The request | What happens |
+| --- | --- | --- |
+| [Data analyst](guides/use-cases.md#data-analyst) | "Which region grew the most?" | Keeps variables across turns, writes the report to `out/`; its read of `.env` is denied |
+| [Support agent](guides/use-cases.md#support-agent) | "Ana's order arrived damaged." | Calls your `find_orders` and `issue_refund`; your refund rule holds, the database stays out of reach |
+| [Coding agent](guides/use-cases.md#coding-agent) | "Fix the bug and run the tests." | The tests run; the one that deletes `~/important-notes` fails instead |
+| [API agent](guides/use-cases.md#api-agent) | "What's the weather in Lisbon?" | Only the tool you granted gets the network and the key |
+
+Each one is a runnable example tested on every commit.
+
 ## Three ways to run
 
 ```bash
@@ -51,6 +62,7 @@ machine and keeps the whole Python ecosystem on the model's side of it.
 
 | Guide | What you learn |
 | --- | --- |
+| [Use cases](guides/use-cases.md) | Data analyst, support, coding and API agents, with real output |
 | [Agents](guides/agents.md) | Turn the pool into a tool; permissions, results, errors, frameworks |
 | [Pool protocol](guides/pool.md) | Every request and result field; profiles and limits |
 | [Monty](guides/monty.md) | Monty orchestrates, Pynox executes |

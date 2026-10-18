@@ -27,6 +27,9 @@
   plain socket, measured at about 200 ms init; and multi-architecture
   container images per CPython minor and libc, built from the bundles with
   no build step and pushed to GHCR by the release workflow.
+- Add four agent use cases (data analyst, support, coding, API) as runnable
+  examples tested on every commit, with a use cases page built from their
+  real output.
 - Add host functions: a pool request declares `functions`, the code calls
   them as `pynox_host.NAME(...)`, the pool emits a `call` event and the
   client's `reply` returns the value; undeclared names never reach the

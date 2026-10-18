@@ -211,6 +211,7 @@ See [performance](../performance.md) for the method and the full table.
 
 ## Next steps
 
+- [Use cases](use-cases.md): four agents end to end, with real output
 - [Pool protocol](pool.md): every field of a request and a result
 - [Monty](monty.md): Monty orchestrates, Pynox executes
 - [Sandbox contract](../sandbox.md): what the kernel enforces and what it does not

@@ -19,6 +19,26 @@ model can act on.
 > 🚧 **Pre-alpha (0.1.0).** Linux only. Ready to try and to break; interfaces
 > and sandbox policies still change.
 
+Give an agent a Python tool in one line. The model writes code; you decide
+what that code may touch:
+
+```python
+import pynox
+
+agent = Agent("anthropic:claude-sonnet-4-5", tools=[pynox.tool(allow_read=["data"], allow_write=["out"])])
+```
+
+| Agent | What happens when it oversteps |
+| --- | --- |
+| [Data analyst](docs/guides/use-cases.md#data-analyst) with notebook-style state | Its read of the project's `.env` is denied; the report still lands in `out/` |
+| [Support agent](docs/guides/use-cases.md#support-agent) calling your backend | Your refund rule holds; opening the database directly fails |
+| [Coding agent](docs/guides/use-cases.md#coding-agent) running the test suite | A test that deletes `~/important-notes` fails instead of deleting it |
+| [API agent](docs/guides/use-cases.md#api-agent) with a key | Only the tool you granted gets the network and the key |
+
+Each case is a runnable file in [`examples/use_cases/`](examples/use_cases/),
+run by the test suite on every commit. The rest of this page starts from
+plain Python and builds up to agents.
+
 ## Run a script
 
 Build once (Linux, Rust and uv >= 0.13.1; `uv` fetches the matching Python):
@@ -94,30 +114,17 @@ Pynox never reads a `pynox.toml` beside the script, only the one where you
 run or the one you pass with `--config`. A program cannot widen its own
 permissions.
 
-## Why this exists: agents write code
+## Agents write code
 
-An agent answers a question by writing Python and running it. Today that
-code runs in one of two places. On your machine with your privileges, where
-one ambiguous instruction becomes `rmtree` on the wrong directory or a read of
+An agent answers a question by writing Python and running it. Today that code
+runs in one of two places. On your machine with your privileges, where one
+ambiguous instruction becomes `rmtree` on the wrong directory or a read of
 `~/.aws/credentials`. Or in a remote container, which takes a second to start,
 costs money per hour and ships your data out.
 
 Pynox is the third place. The model's code runs locally, under the policy you
-wrote, in about 5 ms. When it oversteps, the model gets the error text and
-corrects itself on the next turn. The `pynox` Python package makes that one
-line in any framework:
-
-```python
-import pynox
-
-agent = Agent("anthropic:claude-sonnet-4-5", tools=[pynox.tool(profile="analysis")])
-```
-
-`pynox.tool()` returns a plain `run_python(code) -> str` function with a
-docstring written for the model. Pydantic AI takes it as is; Strands and
-smolagents wrap it with their `tool` decorator; Monty takes it as an external
-function. Permissions come from the profile in `pynox.toml` or from keyword
-arguments, never from the model:
+wrote, in about 5 ms per call. When it oversteps, the model reads what was
+denied and why, and its next attempt is usually right:
 
 ```python
 >>> run_python = pynox.tool(allow_write=["out"], timeout="10s")
@@ -129,24 +136,35 @@ at agent.py:1
 For files, grant the specific path with --allow-read/--allow-write. ...
 ```
 
-`pynox.run(code)` gives the same result as an object with `ok`, `text`,
-`stdout` and a structured `error`. Each call forks a fresh process from a warm
-CPython template, so preloaded libraries cost nothing per call and nothing
-leaks between calls. `pynox.tool(session=True)` keeps one isolated process
-instead, so a variable defined in one call is there in the next, and
-`pynox.tool(functions={"search": search})` lets the model's code call your
-own functions, which run in your process, outside the sandbox. The package is a thin client of `pynox pool`, a JSON
-Lines protocol you can drive from any language.
+`pynox.tool()` returns a plain `run_python(code) -> str` with a docstring
+written for the model, so every framework takes it: Pydantic AI as is,
+Strands and smolagents through their `tool` decorator, Monty as an external
+function. Three options cover most agents:
 
-The wheel embeds the binary and a CPython of the **same minor version as your
-environment**, so the sandbox imports the packages you already installed.
-Build it with `make wheel` and `pip install dist/pynox-*.whl`; PyPI
-publication follows the first release.
+- **`session=True`** keeps one isolated process, so a variable defined in one
+  call is there in the next, like a notebook.
+- **`functions={"search": search}`** lets the model's code call your own
+  functions. They run in your process, outside the sandbox, so they can reach
+  your database while the model's code cannot.
+- **`profile="analysis"`** takes the permissions from `pynox.toml`, so the
+  application code carries no paths.
 
-Read the [agents guide](docs/guides/agents.md) for permissions, results and
-framework registration, the [pool protocol](docs/guides/pool.md) for every
-field, and [Monty](docs/guides/monty.md) to pair Pynox with Pydantic's
-glue-code sandbox.
+`pynox.run(code)` does the same without an agent and returns a result with
+`ok`, `text`, `stdout` and a structured `error`. Each call forks a fresh
+process from a warm CPython template: preloaded libraries cost nothing per
+call and nothing leaks between calls.
+
+Install the package from a checkout with `make wheel` and
+`pip install dist/pynox-*.whl`; PyPI publication follows the first release.
+The wheel embeds a CPython of the **same minor version as your environment**,
+so the sandbox imports the packages you already installed. Underneath, the
+package speaks `pynox pool`, a JSON Lines protocol you can drive from any
+language.
+
+Read the [use cases](docs/guides/use-cases.md), the
+[agents guide](docs/guides/agents.md) for permissions and results, the
+[pool protocol](docs/guides/pool.md) for every field, and
+[Monty](docs/guides/monty.md) to pair Pynox with Pydantic's glue-code sandbox.
 
 ## Plain Python when you need it
 
@@ -204,7 +222,7 @@ pynox --version
 Full documentation: **[ferrumio.github.io/pynox](https://ferrumio.github.io/pynox/)**.
 
 - [Getting started](docs/getting-started.md)
-- [Agents](docs/guides/agents.md), [pool protocol](docs/guides/pool.md), [Monty](docs/guides/monty.md)
+- [Use cases](docs/guides/use-cases.md), [agents](docs/guides/agents.md), [pool protocol](docs/guides/pool.md), [Monty](docs/guides/monty.md)
 - [Commands](docs/usage.md) and the [sandbox contract](docs/sandbox.md)
 - [Deploy](docs/deploy.md), [installation](docs/distribution.md), [performance](docs/performance.md)
 - [Architecture decisions](ADR/README.md) and [security scope](SECURITY.md)
