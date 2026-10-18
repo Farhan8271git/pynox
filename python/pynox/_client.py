@@ -230,6 +230,25 @@ class Pool:
             raw=report,
         )
 
+    def stats(self) -> dict[str, Any]:
+        """The pool's counters: jobs by outcome, error types, timing and sessions."""
+        self.start()
+        answers: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=1)
+        with self._lock:
+            process = self._process
+            if process is None or process.stdin is None:
+                raise PoolError("pynox pool is closed")
+            self._sequence += 1
+            request_id = self._sequence
+            self._pending[request_id] = answers
+            process.stdin.write(json.dumps({"id": request_id, "stats": True}) + "\n")
+            process.stdin.flush()
+        report = answers.get()
+        if report is None:
+            raise PoolError("pynox pool exited before answering")
+        report.pop("id", None)
+        return report
+
     def tool(self, profile: str | None = None, **options: Any):
         """A ``run_python(code) -> str`` function bound to this pool; see ``pynox.tool``."""
         from pynox._tool import make_tool

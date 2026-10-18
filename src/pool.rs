@@ -52,6 +52,9 @@ pub struct PoolCli {
     /// (default: $PYNOX_CONFIG, then ./pynox.toml).
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
+    /// Structured job logs on stderr: "json" or "off" (default off).
+    #[arg(long, value_name = "FORMAT")]
+    log: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -59,6 +62,9 @@ pub struct PoolCli {
 struct Request {
     #[serde(default)]
     id: Value,
+    /// Answer with the pool's counters instead of running anything.
+    #[serde(default)]
+    stats: bool,
     /// Run in a persistent session of this name: one isolated process whose
     /// `__main__` survives between requests. Created by the first request,
     /// which fixes its permissions; later requests only carry `code`.
@@ -328,13 +334,114 @@ struct Pending {
     received: Instant,
 }
 
-type Writer = Arc<Mutex<std::io::Stdout>>;
+/// Pool output: protocol lines on stdout, counters for `{"stats": true}`,
+/// and optional structured job logs on stderr for operators.
+pub struct Output {
+    stdout: Mutex<std::io::Stdout>,
+    stats: Mutex<Stats>,
+    log: bool,
+    started: Instant,
+}
 
+#[derive(Default)]
+struct Stats {
+    jobs: u64,
+    ok: u64,
+    failed: u64,
+    timeouts: u64,
+    signals: u64,
+    request_errors: u64,
+    worker_errors: u64,
+    duration_ms: u64,
+    queue_us: u64,
+    errors: BTreeMap<String, u64>,
+}
+
+type Writer = Arc<Output>;
+
+impl Output {
+    fn new(log: bool) -> Self {
+        Output {
+            stdout: Mutex::new(std::io::stdout()),
+            stats: Mutex::new(Stats::default()),
+            log,
+            started: Instant::now(),
+        }
+    }
+
+    /// Count a job result and, with logging on, describe it on stderr. Logs
+    /// carry identifiers, outcome and timing, never captured output.
+    fn record(&self, result: &Value) {
+        let kind = result["error"]["type"].as_str();
+        let exit = result["exit"].as_i64().unwrap_or(125);
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.jobs += 1;
+            stats.duration_ms += result["duration_ms"].as_u64().unwrap_or(0);
+            stats.queue_us += result["queue_us"].as_u64().unwrap_or(0);
+            match (exit, kind) {
+                (0, None) => stats.ok += 1,
+                (124, Some("TimeoutError")) => stats.timeouts += 1,
+                (_, Some("SignalError")) => stats.signals += 1,
+                (_, Some("RequestError")) => stats.request_errors += 1,
+                (_, Some("PoolWorkerError" | "SandboxSetupError" | "WorkerError")) => {
+                    stats.worker_errors += 1
+                }
+                _ => stats.failed += 1,
+            }
+            if let Some(kind) = kind {
+                *stats.errors.entry(kind.to_owned()).or_default() += 1;
+            }
+        }
+        if self.log {
+            let message: String = result["error"]["message"]
+                .as_str()
+                .unwrap_or("")
+                .chars()
+                .take(200)
+                .collect();
+            let line = json!({
+                "ts_ms": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_millis() as u64),
+                "event": "job",
+                "id": result["id"], "session": result["session"], "step": result["step"],
+                "exit": exit, "error": kind, "message": if kind.is_some() { json!(message) } else { Value::Null },
+                "duration_ms": result["duration_ms"], "queue_us": result["queue_us"],
+                "network": result["policy"]["network"],
+                "truncated": result["stdout_truncated"].as_bool().unwrap_or(false)
+                    || result["stderr_truncated"].as_bool().unwrap_or(false),
+            });
+            let mut stderr = std::io::stderr().lock();
+            let _ = writeln!(stderr, "{line}");
+        }
+    }
+
+    fn snapshot(&self, sessions: usize, workers: u16) -> Value {
+        let stats = self.stats.lock().unwrap();
+        json!({
+            "event": "stats",
+            "uptime_ms": self.started.elapsed().as_millis() as u64,
+            "workers": workers, "sessions_active": sessions,
+            "jobs": stats.jobs, "ok": stats.ok, "failed": stats.failed,
+            "timeouts": stats.timeouts, "signals": stats.signals,
+            "request_errors": stats.request_errors, "worker_errors": stats.worker_errors,
+            "duration_ms_total": stats.duration_ms, "queue_us_total": stats.queue_us,
+            "errors": stats.errors,
+        })
+    }
+}
+
+/// Write one protocol line. Job results (those with an `exit` and no
+/// `event`) are also counted and, when enabled, logged.
 fn emit(writer: &Writer, result: &Value) -> Result<()> {
-    let mut writer = writer.lock().unwrap();
-    serde_json::to_writer(&mut *writer, result)?;
-    writer.write_all(b"\n")?;
-    writer.flush()?;
+    if result.get("event").is_none() && result.get("exit").is_some() {
+        writer.record(result);
+    }
+    let mut stdout = writer.stdout.lock().unwrap();
+    serde_json::to_writer(&mut *stdout, result)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
     Ok(())
 }
 
@@ -361,7 +468,16 @@ pub fn run(options: PoolCli) -> Result<()> {
     let mut package_dirs = options.package_dir;
     package_dirs.extend(section.iter().flat_map(|p| p.package_dirs.iter().cloned()));
     let config = Arc::new(TemplateConfig::new(preload, package_dirs)?);
-    let writer = Arc::new(Mutex::new(std::io::stdout()));
+    let log = match options
+        .log
+        .as_deref()
+        .or(section.and_then(|p| p.log.as_deref()))
+    {
+        None | Some("off") => false,
+        Some("json") => true,
+        Some(other) => bail!("log must be \"off\" or \"json\", not {other:?}"),
+    };
+    let writer: Writer = Arc::new(Output::new(log));
     // Templates are separate exec'd processes. The threaded supervisor is
     // never forked and cannot copy previous requests/secrets into a new job.
     let templates = (0..workers)
@@ -485,6 +601,12 @@ pub fn run(options: PoolCli) -> Result<()> {
             match raw.and_then(serde_json::from_value::<Request>) {
                 Ok(mut request) => {
                     request.id = id.clone();
+                    if request.stats {
+                        let mut snapshot = writer.snapshot(sessions.lock().unwrap().len(), workers);
+                        snapshot["id"] = id;
+                        emit(&writer, &snapshot)?;
+                        continue;
+                    }
                     let pending = Pending {
                         id: id.clone(),
                         request,

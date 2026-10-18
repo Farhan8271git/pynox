@@ -34,6 +34,12 @@ Landlock, `prctl` and `pidfd_open` without changing its own process, and
 returns `sandbox_supported` with `sandbox_unavailable_reasons`, separate from
 `runtime_supported`, so a blocked environment is diagnosed before a task fails.
 
+The pool reports on itself as well as on tasks: a `stats` request returns
+counters by outcome and error type, and `--log=json` emits one stderr line per
+job with identifiers, outcome and timing. Neither carries captured output,
+which may hold secrets; logging is off by default so embedding applications
+do not inherit noise on their stderr.
+
 ## Alternatives considered
 
 - JSON on every invocation: unusable as a terminal tool.

@@ -47,6 +47,10 @@ containers with `--security-opt seccomp=unconfined` for this reason; a custom
 profile that allows those syscalls is the narrower option. Running the
 container as a non-root user is fine: Landlock and seccomp need no privilege.
 
+Run the pool with `--log=json` and ship container stderr to your log system;
+poll `{"stats": true}` for health and counters. See
+[observability](guides/pool.md#observability).
+
 ## Kubernetes
 
 The node's kernel and container runtime decide, exactly as with Docker. Run a

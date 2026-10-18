@@ -455,3 +455,56 @@ class FileSizeLimitTests(unittest.TestCase):
             self.assertEqual(reports["default"]["policy"]["max_file_size_bytes"], 64 * 1024)
             self.assertEqual(reports["over"]["error"]["type"], "RequestError")
             self.assertEqual(reports["under"]["policy"]["max_file_size_bytes"], 8 * 1024)
+
+
+class ObservabilityTests(unittest.TestCase):
+    def test_stats_count_outcomes_and_logs_describe_jobs_without_output(self):
+        jobs = [
+            {"id": "ok", "code": "print('secret-value')"},
+            {"id": "err", "code": "1/0"},
+            {"id": "denied", "code": "open('/etc/passwd').read()"},
+            {"id": "slow", "code": "while True: pass", "timeout": "200ms"},
+            {"id": "bad", "code": "pass", "timeout": "forever"},
+            {"id": "s", "session": "obs", "code": "x = 1"},
+        ]
+        process = subprocess.Popen(
+            [str(runtime.BINARY), "pool", "--workers=1", "--log=json"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.addCleanup(process.kill)
+        process.stdout.readline()
+        for job in jobs:
+            process.stdin.write(json.dumps(job) + "\n")
+        process.stdin.flush()
+        answered = {json.loads(process.stdout.readline())["id"] for _ in jobs}
+        self.assertEqual(answered, {job["id"] for job in jobs})
+        process.stdin.write(json.dumps({"id": "stats", "stats": True}) + "\n")
+        process.stdin.flush()
+        stats = json.loads(process.stdout.readline())
+        process.stdin.close()
+        stderr = process.stderr.read()
+        process.wait(timeout=10)
+        self.assertEqual((stats["id"], stats["event"], stats["workers"]), ("stats", "stats", 1))
+        self.assertEqual(stats["sessions_active"], 1)
+        self.assertEqual((stats["jobs"], stats["ok"], stats["failed"]), (6, 2, 2))
+        self.assertEqual((stats["timeouts"], stats["request_errors"]), (1, 1))
+        self.assertEqual(stats["errors"]["ZeroDivisionError"], 1)
+        self.assertEqual(stats["errors"]["PermissionError"], 1)
+        logs = [json.loads(line) for line in stderr.splitlines()]
+        self.assertEqual(len(logs), 6, stderr)
+        by_id = {entry["id"]: entry for entry in logs}
+        self.assertEqual((by_id["ok"]["exit"], by_id["ok"]["error"]), (0, None))
+        self.assertEqual(by_id["denied"]["error"], "PermissionError")
+        self.assertEqual(by_id["slow"]["exit"], 124)
+        self.assertEqual(by_id["s"]["session"], "obs")
+        self.assertNotIn("secret-value", stderr, "logs never carry captured output")
+
+    def test_logging_is_off_by_default_and_validated(self):
+        quiet = run("pool", "--workers=1", stdin='{"id": 1, "code": "pass"}\n')
+        self.assertEqual(quiet.stderr, "")
+        bad = run("pool", "--workers=1", "--log=xml", stdin="")
+        self.assertEqual(bad.returncode, 125)
+        self.assertIn("log must be", bad.stdout)

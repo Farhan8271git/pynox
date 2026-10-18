@@ -39,6 +39,8 @@ pub struct PoolSection {
     pub max_sessions: Option<u16>,
     /// Close a session idle for this long (default `10m`).
     pub session_idle: Option<String>,
+    /// Structured job logs on stderr: "json" or "off".
+    pub log: Option<String>,
     #[serde(default)]
     pub preload: Vec<String>,
     #[serde(default)]

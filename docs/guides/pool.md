@@ -16,6 +16,7 @@ pynox pool --workers=2 [--preload=pandas,numpy] [--package-dir=/path/to/site-pac
 | `--preload=a,b` | Trusted modules imported once in every template, before any job |
 | `--package-dir=PATH` | Trusted package directory readable by every job |
 | `--config=PATH` | `pynox.toml` with `[pool]`, `[pool.limits]` and `[profiles]`; default `$PYNOX_CONFIG`, then `./pynox.toml` |
+| `--log=json` | One JSON line per job on stderr; default `off`, also `[pool] log` |
 
 The first output line is the `ready` event:
 
@@ -72,6 +73,7 @@ preload = ["pandas"]
 package_dirs = ["/srv/agent/site-packages"]
 max_sessions = 32
 session_idle = "15m"
+log = "json"
 
 [pool.limits]
 allow_read = ["/srv/agent/data"]
@@ -156,6 +158,31 @@ for agents that define a variable in one call and use it in the next.
 
 From Python: `Pool.session(**grants)` returns a `Session` with `run` and
 `close`, and `pynox.tool(session=True)` gives a model a stateful tool.
+
+## Observability
+
+`{"id": "s1", "stats": true}` answers at once with the pool's counters, without
+running anything:
+
+```json
+{"id": "s1", "event": "stats", "uptime_ms": 81234, "workers": 4, "sessions_active": 2,
+ "jobs": 1520, "ok": 1391, "failed": 97, "timeouts": 12, "signals": 0,
+ "request_errors": 20, "worker_errors": 0, "duration_ms_total": 20511, "queue_us_total": 98120,
+ "errors": {"PermissionError": 41, "NameError": 30, "TimeoutError": 12, "RequestError": 20}}
+```
+
+`failed` counts tasks whose Python code raised or exited non-zero; the other
+outcome counters are disjoint from it. `errors` counts by error type.
+`Pool.stats()` returns the same object from Python.
+
+`--log=json` writes one line per finished job to stderr for your log
+pipeline. It carries identifiers, outcome and timing, never captured output:
+
+```json
+{"ts_ms": 1792310000123, "event": "job", "id": "tool-42", "session": null, "step": null,
+ "exit": 1, "error": "PermissionError", "message": "[Errno 13] Permission denied: '/etc/passwd'",
+ "duration_ms": 4, "queue_us": 85, "network": "deny", "truncated": false}
+```
 
 ## Lifecycle
 

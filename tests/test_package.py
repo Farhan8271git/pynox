@@ -107,3 +107,15 @@ class DefaultPoolTests(unittest.TestCase):
         self.assertEqual(tool("print(2 + 2)"), "4\n")
         self.assertIs(pynox.default_pool(), pynox.default_pool())
         self.assertEqual(pynox.binary_path(), str(runtime.BINARY))
+
+
+class StatsTests(unittest.TestCase):
+    def test_pool_stats(self):
+        with pynox.Pool(workers=1) as pool:
+            pool.run("print(1)")
+            pool.run("1/0")
+            stats = pool.stats()
+        self.assertEqual(
+            (stats["event"], stats["jobs"], stats["ok"], stats["failed"]), ("stats", 2, 1, 1)
+        )
+        self.assertEqual(stats["errors"], {"ZeroDivisionError": 1})

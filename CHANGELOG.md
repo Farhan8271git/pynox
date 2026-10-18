@@ -19,6 +19,10 @@
   BPF without applying it to the Rust test runner.
 - Retain a JSONL pool with clean templates and disposable per-task children;
   accept inline `code` with an optional `name` instead of a script file.
+- Add pool observability: `{"stats": true}` returns counters by outcome and
+  error type, `--log=json` (or `[pool] log`) writes one JSON line per job to
+  stderr without captured output, and `Pool.stats()` exposes the counters.
+- Update the development dependency pytest to 9.0.3 for its tmpdir advisory.
 - Add `max_file_size` (flag, configuration, pool request, package) backed by
   `RLIMIT_FSIZE`, with `SIGXFSZ` ignored so oversized writes raise `OSError`;
   a `[pool.limits]` value caps requests and is their default.
