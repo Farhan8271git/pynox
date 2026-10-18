@@ -1,0 +1,104 @@
+# Pool protocol
+
+`pynox pool` keeps a trusted CPython template warm and forks a fresh, sandboxed
+child per request. It speaks JSON Lines on stdin and stdout, so any language
+can drive it; `examples/agent_tool.py` is the Python client.
+
+## Starting
+
+```bash
+pynox pool --workers=2 [--preload=pandas,numpy] [--package-dir=/path/to/site-packages]
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--workers=N` | Concurrent executions, 1 to 32; each has its own template |
+| `--preload=a,b` | Trusted modules imported once in every template, before any job |
+| `--package-dir=PATH` | Trusted package directory readable by every job |
+
+The first output line is the `ready` event:
+
+```json
+{"event": "ready", "workers": 2, "runtime": "pynox", "preloaded_modules": [], "package_dirs": []}
+```
+
+Preloads are operator configuration, never a request field. A template that
+leaves extra threads or open descriptors after preloading is rejected, and no
+job may write over preloaded runtime paths.
+
+## Requests
+
+One JSON object per line. Exactly one of `script` and `code` is required.
+
+```json
+{"id": "task-1", "code": "import json\nprint(json.dumps({'ok': True}))", "name": "step.py", "allow_write": ["out"]}
+```
+
+```json
+{"id": "task-2", "script": "app.py", "args": ["one"], "allow_read": ["data"], "package_dirs": [], "env": {"KEY": "value"}, "allow_network": false, "timeout": "5s", "memory": "512m", "max_output": 65536}
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `id` | line number | Copied into the result; assign unique IDs |
+| `code` | | Inline program text. No file, no file access, no `__file__` |
+| `name` | `<code>` | Label for inline code in errors and `sys.argv[0]` |
+| `script` | | Path of a file to run; only that file is implicitly readable |
+| `args` | `[]` | `sys.argv[1:]` |
+| `allow_read` | `[]` | Existing files or directories to read |
+| `allow_write` | `[]` | Existing paths to write beneath; no implicit read |
+| `package_dirs` | `[]` | Package directories to import from; no `.pth` execution |
+| `env` | `{}` | Environment visible to the task; loader variables are rejected |
+| `allow_network` | `false` | IPv4/IPv6, any host; never subprocesses or host Unix sockets |
+| `timeout` | `5s` | Wall time from execution start, excluding queue wait; up to 24h |
+| `memory` | `512m` | Address-space limit; minimum 32m |
+| `max_output` | `65536` | Captured bytes per stream, up to 16 MiB; excess is dropped |
+
+Unknown fields are rejected. A line longer than 1 MiB is discarded with an
+error and the next line is read normally.
+
+## Results
+
+One JSON object per line, in completion order, not request order:
+
+```json
+{"id": "task-1", "exit": 0, "stdout": "{\"ok\": true}\n", "stderr": "", "error": null,
+ "stdout_truncated": false, "stderr_truncated": false,
+ "duration_ms": 4, "duration_us": 4001, "queue_us": 120,
+ "runtime": {"name": "pynox", "python": "3.11.17", "mode": "pool", "preloaded_modules": []},
+ "policy": {"allow_read": [], "allow_write": ["/abs/out"], "network": "deny", "subprocesses": "deny",
+            "timeout_ms": 5000, "memory_bytes": 536870912, "backend": "landlock+seccomp"}}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `exit` | Python's exit status. 124 timeout, 125 setup or request failure, 128+N signal |
+| `error` | `null`, or `{"type", "message", "file", "line", "path", "hint"}` |
+| `stdout`, `stderr` | Captured text; `*_truncated` says whether `max_output` cut it |
+| `duration_ms` | Execution time; `queue_us` is time spent waiting for a worker |
+| `policy` | The effective policy, with canonical paths |
+
+Error `type` is the Python exception class, or one of `RequestError`,
+`TimeoutError`, `SignalError`, `SandboxSetupError`, `PoolWorkerError`.
+`file` and `line` point at the script or inline `name`; `hint` is present for
+permission and memory errors.
+
+## Lifecycle
+
+- Each job is a new process forked from the template after the request is
+  parsed. Globals, modules imported by the job, environment and open files never
+  reach the next job. Authorized filesystem writes persist.
+- Timeouts kill the child; the pool keeps serving. Interrupted jobs are not
+  retried, since their side effects may have happened.
+- A broken template is replaced before the next request.
+- Consume results while submitting; the pool's queue holds twice the worker
+  count and stdout backpressure blocks it.
+- EOF on stdin drains accepted jobs and exits 0. Inspect each result's `exit`;
+  the pool's own exit status only reports protocol completion.
+
+## From other languages
+
+The protocol is plain JSONL over pipes. Spawn `pynox pool`, wait for `ready`,
+write a line, read lines until the matching `id` arrives. For a Python client
+see `examples/agent_tool.py`; for Monty's external functions calling into the
+pool see [Monty](monty.md).

@@ -1,6 +1,8 @@
 # Pynox 🐍⚙️
 
 ![Status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)
+[![CI](https://github.com/ferrumio/pynox/actions/workflows/ci.yml/badge.svg)](https://github.com/ferrumio/pynox/actions/workflows/ci.yml)
+[![Documentation](https://img.shields.io/badge/docs-ferrumio.github.io%2Fpynox-indigo)](https://ferrumio.github.io/pynox/)
 [![CPython 3.11–3.15](https://img.shields.io/badge/CPython-3.11%E2%80%933.15-blue)](#python-versions)
 ![Linux x86_64 and ARM64](https://img.shields.io/badge/platform-Linux%20x86__64%20%7C%20ARM64-lightgrey)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
@@ -123,28 +125,37 @@ Use Pynox as the execution tool in your agent loop. Your application chooses
 each task's permissions; the model only supplies code and receives a result it
 can inspect to decide its next step. No framework-specific SDK is required.
 
-[`examples/agent_tool.py`](examples/agent_tool.py) wraps a pool as a plain
-Python function you can register in any framework:
+A tool is a function the model can call. [`examples/agent_tool.py`](examples/agent_tool.py)
+gives you the pool client; the host fixes the permissions, the model only
+writes code, and the result comes back as text the model can read:
 
 ```python
 from agent_tool import PynoxPool
 
-with PynoxPool(workers=2, preload=["json"]) as pool:
-    result = pool.run(
-        "import json\nprint(json.dumps({'total': sum(range(10))}))",
-        allow_read=["data"], allow_write=["out"], timeout="5s",
-    )
-    print(result.describe())   # {"total": 45}
-    failed = pool.run("open('/etc/passwd').read()", name="probe.py")
-    print(failed.describe())   # PermissionError ... at probe.py:1, plus the hint
+pool = PynoxPool(workers=2)
+
+def run_python(code: str) -> str:
+    """Run Python written by the model. It can write to ./out and nothing else."""
+    result = pool.run(code, allow_write=["out"], timeout="10s", memory="256m")
+    return result.describe()
 ```
 
+```python
+>>> print(run_python("print(sum(range(10)))"))
+45
+>>> print(run_python("open('/etc/passwd').read()"))
+PermissionError: [Errno 13] Permission denied: '/etc/passwd'
+at agent.py:1
+For files, grant the specific path with --allow-read/--allow-write. ...
+```
+
+Register `run_python` with your framework's tool decorator and you are done.
 Under the hood this is `pynox pool --workers=2` speaking JSONL: one request per
-line with `code` (or `script`), permissions and limits; one result per line
-with `id`, `exit`, `stdout`, `error` and timing. Each job runs in a fresh child
-forked from a warm template, so a small task answers in about 5 ms. Python
-globals are not shared between jobs; authorized file writes persist. See
-[pool usage](docs/usage.md#pool-pynox-pool---workers2).
+line with `code`, permissions and limits; one result per line with `id`,
+`exit`, `stdout`, `error` and timing. Each job runs in a fresh child forked
+from a warm template, so a small task answers in about 5 ms. Python globals
+are not shared between jobs; authorized file writes persist. See the
+[agents guide](docs/guides/agents.md) and the [pool protocol](docs/guides/pool.md).
 
 ### With Monty
 
@@ -205,7 +216,11 @@ See the [test guide](tests/README.md) for coverage and Python version selection.
 
 ## Documentation
 
-- [Commands and worker pools](docs/usage.md)
+Full documentation lives at **[ferrumio.github.io/pynox](https://ferrumio.github.io/pynox/)**.
+
+- [Getting started](docs/getting-started.md)
+- [Agents: tools, pool protocol and Monty](docs/guides/agents.md)
+- [Commands](docs/usage.md)
 - [Sandbox and permissions](docs/sandbox.md)
 - [Installation and Python versions](docs/distribution.md)
 - [Performance and compatibility](docs/performance.md)

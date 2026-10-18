@@ -1,11 +1,65 @@
 site_name = "Pynox"
 site_description = "The Python runtime for agents: kernel sandbox, warm pool, transparent optimizations"
+site_url = "https://ferrumio.github.io/pynox"
+repo_url = "https://github.com/ferrumio/pynox"
+repo_name = "ferrumio/pynox"
+
 nav = [
-  { "Overview" = "index.md" },
-  { "Commands" = "usage.md" },
-  { "Sandbox" = "sandbox.md" },
-  { "Distribution" = "distribution.md" },
-  { "Performance" = "performance.md" },
-  { "Research" = "research.md" },
-  { "Architecture decisions" = "adr/README.md" },
+  { "Home" = [
+    "index.md",
+    "getting-started.md",
+  ] },
+  { "Agents" = [
+    "guides/agents.md",
+    "guides/pool.md",
+    "guides/monty.md",
+  ] },
+  { "Runtime" = [
+    "usage.md",
+    "sandbox.md",
+    "performance.md",
+  ] },
+  { "Install" = [
+    "distribution.md",
+  ] },
+  { "Project" = [
+    "research.md",
+    "adr/README.md",
+  ] },
 ]
+
+[theme]
+name = "material"
+features = ["navigation.sections", "content.code.copy", "content.code.annotate"]
+
+[[theme.palette]]
+scheme = "default"
+primary = "indigo"
+accent = "amber"
+[theme.palette.toggle]
+icon = "material/brightness-7"
+name = "Switch to dark mode"
+
+[[theme.palette]]
+scheme = "slate"
+primary = "indigo"
+accent = "amber"
+[theme.palette.toggle]
+icon = "material/brightness-4"
+name = "Switch to light mode"
+
+[markdown_extensions]
+admonition = {}
+
+[markdown_extensions."pymdownx.details"]
+
+[markdown_extensions."pymdownx.highlight"]
+anchor_linenums = true
+
+[markdown_extensions."pymdownx.superfences"]
+
+[markdown_extensions."pymdownx.tabbed"]
+alternate_style = true
+
+[markdown_extensions."pymdownx.snippets"]
+base_path = "."

@@ -48,15 +48,20 @@ def main():
         assert "on" in data and "permissions" in data, source
         for action in re.findall(r"^\s*(?:-\s*)?uses:\s*(\S+)", source.read_text(), re.M):
             assert action.startswith("./") or re.search(r"@[a-f0-9]{40}$", action), (source, action)
-    for directory in (ROOT, ROOT / "docs", ROOT / "ADR", ROOT / "tests"):
-        for source in directory.glob("*.md"):
-            for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", source.read_text()):
-                if "://" in target or target.startswith("#"):
-                    continue
-                destination = (source.parent / target.split("#")[0]).resolve()
-                if destination.is_relative_to(ROOT / "docs/adr"):
-                    destination = ROOT / "ADR" / destination.relative_to(ROOT / "docs/adr")
-                assert destination.exists(), (source, target)
+    pages = [*ROOT.glob("*.md"), *(ROOT / "ADR").glob("*.md"), *(ROOT / "tests").glob("*.md")]
+    pages += [p for p in (ROOT / "docs").rglob("*.md") if not p.is_relative_to(ROOT / "docs/adr")]
+    for source in pages:
+        text = source.read_text()
+        for target in re.findall(r"\[[^]]+\]\(([^)]+)\)", text):
+            if "://" in target or target.startswith("#"):
+                continue
+            destination = (source.parent / target.split("#")[0]).resolve()
+            if destination.is_relative_to(ROOT / "docs/adr"):
+                destination = ROOT / "ADR" / destination.relative_to(ROOT / "docs/adr")
+            assert destination.exists(), (source, target)
+        # Documentation snippets embed real, tested files from the repository.
+        for snippet in re.findall(r'--8<-- "([^"]+)"', text):
+            assert (ROOT / snippet).is_file(), (source, snippet)
     print(f"Pynox {version}: metadata, links and action pins valid")
 
 

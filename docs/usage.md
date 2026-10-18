@@ -51,42 +51,15 @@ under `LANG=C.UTF-8`.
 
 ## Pool: `pynox pool --workers=2`
 
-Accepts JSONL on stdin. First output is a `ready` event. A request names a
-program with either `script`, a file path, or `code`, inline program text:
-
-```json
-{"id":"task-1","script":"app.py","args":["one"],"allow_read":["data"],"allow_write":["out"],"package_dirs":[],"env":{"KEY":"value"},"allow_network":false,"timeout":"5s","memory":"512m","max_output":65536}
-{"id":"task-2","code":"import json\nprint(json.dumps({'ok': True}))","name":"step.py","allow_write":["out"]}
-```
-
-Inline code is what agents send. It needs no file, grants no file access, has
-no `__file__`, and reports errors against `name` (default `<code>`). Exactly
-one of `script` and `code` is required. All other fields default to the values
-shown in the first example. Unknown fields are rejected. IDs are copied into results; callers must assign
-unique IDs and handle out-of-order completion. Requests without ID use their
-line number. Maximum line size is 1 MiB; queue capacity is twice worker count.
-Consume responses while submitting to avoid pipe backpressure deadlocks.
-
-Workers range from 1 to 32. Timeout starts at execution, excluding queue wait.
-EOF drains accepted jobs. Pool exit 0 means protocol completion; inspect each
-task's `exit`. Failed templates are replaced; interrupted tasks are not retried.
-Each task gets fresh process state. Authorized filesystem writes persist.
-
-Operator flags `--preload=module1,module2 --package-dir=PATH` preload trusted
-code before sandboxing. Imports cannot leave extra threads/descriptors. Global
-package reads apply to every job, and tasks cannot write over the preloaded
-runtime. Modules with unsafe native fork behavior require a separate process
-strategy; these startup checks do not certify every extension.
+A warm CPython template that forks a fresh, sandboxed child per JSONL request.
+Requests carry inline `code` or a `script`, plus the same permissions and
+limits as `pynox sandbox`. The full request and result reference is in the
+[pool protocol](guides/pool.md).
 
 ## Agent integrations
 
-[`examples/agent_tool.py`](https://github.com/ferrumio/pynox/blob/main/examples/agent_tool.py)
-wraps the pool as a Python function with `allow_read`, `allow_write`,
-`allow_network`, `timeout` and `memory` arguments, returning `exit`, `stdout`,
-`stderr`, the structured `error` and a `describe()` text for the model.
-[`examples/monty_bridge.py`](https://github.com/ferrumio/pynox/blob/main/examples/monty_bridge.py)
-runs agent glue code in Monty and delegates heavy work to Pynox through an
-external function. Both examples run in the test suite.
+See [Agents](guides/agents.md) for the tool shape and framework registration,
+and [Monty](guides/monty.md) for the two-level sandbox.
 
 ## Diagnostics
 
