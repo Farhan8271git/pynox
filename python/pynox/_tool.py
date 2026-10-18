@@ -42,7 +42,9 @@ def tool(profile: str | None = None, **options: Any) -> Callable[[str], str]:
 
     ``profile`` names a permission set from ``pynox.toml``; keyword options are
     ``Pool.run``'s and apply to every call. ``session=True`` keeps one isolated
-    process for the tool, so variables survive between calls. ``name`` and
+    process for the tool, so variables survive between calls. ``functions``
+    maps names to host callables the code can use via ``pynox_host``, listed
+    with their signatures in the docstring the model reads. ``name`` and
     ``description`` change what the model sees. The model only ever supplies
     ``code``.
     """
@@ -103,5 +105,20 @@ def _describe(profile: str | None, options: dict[str, Any]) -> str:
         )
     if options.get("session"):
         lines.append("Variables and imports persist between calls, like a notebook.")
+    functions = options.get("functions") or {}
+    if functions:
+        lines += ["", "The code can call these host functions after `from pynox_host import ...`:"]
+        for fname, function in sorted(functions.items()):
+            try:
+                import inspect
+
+                signature = str(inspect.signature(function))
+            except (TypeError, ValueError):
+                signature = "(...)"
+            summary = (function.__doc__ or "").strip().splitlines()
+            lines.append(f"    {fname}{signature}" + (f": {summary[0]}" if summary else ""))
+        lines.append(
+            "Arguments and results travel as JSON; a failed call raises pynox_host.HostError."
+        )
     lines.append("Errors come back as the exception type, message, line and a hint.")
     return "\n".join(lines)

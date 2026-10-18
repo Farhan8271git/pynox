@@ -2,7 +2,8 @@
 //! template of its own, running successive steps in the same `__main__`.
 //! Permissions are fixed when the session starts; every step reuses them.
 use crate::{
-    capture::{pipe, Stream},
+    bridge::TaskCalls,
+    capture::{pipe, report_capacity, Calls, Stream},
     forkserver::{RunningJob, Template},
     policy::Policy,
     preload::TemplateConfig,
@@ -64,7 +65,7 @@ impl Session {
             streams: [
                 Stream::new(out_read, maximum)?,
                 Stream::new(err_read, maximum)?,
-                Stream::new(report_read, 65_536)?,
+                Stream::new(report_read, report_capacity(&job.policy))?,
             ],
             policy: job.policy.clone(),
             steps: 0,
@@ -78,22 +79,36 @@ impl Session {
 
     /// Run one step and collect its output until the child reports completion,
     /// exits, or the deadline passes. A timeout ends the session.
-    pub fn step(&mut self, step: &Step, timeout_ms: u64, max_output: usize) -> Result<Value> {
+    pub fn step(
+        &mut self,
+        step: &Step,
+        timeout_ms: u64,
+        max_output: usize,
+        calls: Option<Calls>,
+    ) -> Result<Value> {
         if !self.alive {
             bail!("Session has ended");
         }
         let start = Instant::now();
         self.steps += 1;
-        for (stream, maximum) in self
-            .streams
-            .iter_mut()
-            .zip([max_output, max_output, 65_536])
+        let report_maximum = report_capacity(&self.policy);
+        for (stream, maximum) in
+            self.streams
+                .iter_mut()
+                .zip([max_output, max_output, report_maximum])
         {
             stream.reset(maximum);
         }
+        let mut calls = match calls {
+            Some(calls) if !self.policy.host_functions.is_empty() => Some((
+                TaskCalls::new(calls.bridge, calls.task_id, &self.input),
+                calls.emit,
+            )),
+            _ => None,
+        };
         let mut line = serde_json::to_vec(step)?;
         line.push(b'\n');
-        if let Err(error) = self.input.write_all(&line) {
+        if let Err(error) = (&self.input).write_all(&line) {
             self.alive = false;
             bail!("Session child is not accepting steps: {error}");
         }
@@ -111,6 +126,11 @@ impl Session {
             if timed_out && now > deadline + Duration::from_secs(2) {
                 self.alive = false;
                 bail!("Template did not acknowledge step termination");
+            }
+            if let Some((task, emit)) = calls.as_mut() {
+                for event in task.drain(&mut self.streams[2].data, &self.policy, true) {
+                    emit(&event)?;
+                }
             }
             let report_complete = self.streams[2].data.contains(&b'\n');
             if report_complete || (status.is_some() && self.streams.iter().all(|s| s.eof)) {
@@ -170,6 +190,7 @@ impl Session {
                 stream.read_available()?;
             }
         }
+        drop(calls);
         if status.is_some() || timed_out {
             self.alive = false;
         }

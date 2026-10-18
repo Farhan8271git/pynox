@@ -59,7 +59,24 @@ notebook("print(df.describe())")                 # df is still there
 ```
 
 A Python error leaves the session alive; a timeout or a crash ends it and the
-next call starts a fresh process. `Pool.session()` gives the same thing as an
+next call starts a fresh process.
+
+Give the code your application's own functions and the model can chain them
+in one run instead of one tool call per turn:
+
+```python
+def search(query: str, limit: int = 5) -> list[dict]:
+    """Search the product catalog."""
+    return catalog.search(query, limit)
+
+run_python = pynox.tool(functions={"search": search}, allow_write=["out"])
+```
+
+The docstring the model reads lists `search(query: str, limit: int = 5)`, and
+its code calls it with `from pynox_host import search`. The function runs in
+your process, not in the sandbox: it can reach your database or API while the
+model's code still cannot. Arguments and results travel as JSON; an exception
+in your function raises `pynox_host.HostError` in the model's code. `Pool.session()` gives the same thing as an
 object with `run`, `close`, `alive` and `steps`. For several permission sets or
 explicit lifecycle, build pools yourself:
 

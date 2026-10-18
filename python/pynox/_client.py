@@ -14,7 +14,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from pynox._binary import binary_path
 
@@ -92,6 +92,7 @@ class Pool:
         self._closed = False
         self._lock = threading.Lock()
         self._pending: dict[int, queue.Queue[dict[str, Any] | None]] = {}
+        self._functions: dict[int, Mapping[str, Callable[..., Any]]] = {}
         self._sequence = 0
         self.ready: dict[str, Any] = {}
 
@@ -168,11 +169,14 @@ class Pool:
         memory: str | None = None,
         max_output: int | None = None,
         max_file_size: str | None = None,
+        functions: Mapping[str, Callable[..., Any]] | None = None,
     ) -> Result:
         """Run ``code`` in a fresh sandboxed process and wait for its result.
 
         Fields left unset keep the pool's defaults, the profile's values and
-        the operator's ``[pool.limits]``.
+        the operator's ``[pool.limits]``. ``functions`` are host functions the
+        code may call as ``from pynox_host import name``; they run here, in
+        this process, with arguments and results passed as JSON.
         """
         request: dict[str, Any] = {"code": code, "name": name, "args": list(args)}
         if profile is not None:
@@ -197,10 +201,28 @@ class Pool:
         ):
             if value is not None:
                 request[key] = value
-        return self.request(request)
+        return self.request(request, functions=functions)
 
-    def request(self, request: dict[str, Any]) -> Result:
-        """Send a raw pool request (see the pool protocol) and wait for its result."""
+    def request(
+        self,
+        request: dict[str, Any],
+        *,
+        functions: Mapping[str, Callable[..., Any]] | None = None,
+    ) -> Result:
+        """Send a raw pool request (see the pool protocol) and wait for its result.
+
+        ``functions`` answer the task's host calls; their names are declared in
+        the request automatically.
+        """
+        if functions:
+            request = {**request, "functions": sorted(functions)}
+        return self._request_with_handlers(request, functions)
+
+    def _request_with_handlers(
+        self,
+        request: dict[str, Any],
+        functions: Mapping[str, Callable[..., Any]] | None,
+    ) -> Result:
         self.start()
         answers: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=1)
         with self._lock:
@@ -210,13 +232,19 @@ class Pool:
             self._sequence += 1
             request_id = self._sequence
             self._pending[request_id] = answers
+            if functions:
+                self._functions[request_id] = functions
             try:
                 process.stdin.write(json.dumps({**request, "id": request_id}) + "\n")
                 process.stdin.flush()
             except (BrokenPipeError, ValueError) as error:
                 self._pending.pop(request_id, None)
+                self._functions.pop(request_id, None)
                 raise PoolError("pynox pool exited") from error
-        report = answers.get()
+        try:
+            report = answers.get()
+        finally:
+            self._functions.pop(request_id, None)
         if report is None:
             raise PoolError("pynox pool exited before answering")
         return Result(
@@ -249,6 +277,13 @@ class Pool:
         report.pop("id", None)
         return report
 
+    def _answer_call(self, call: dict[str, Any]) -> None:
+        # Host functions may block or call back into the pool: never on the reader thread.
+        functions = self._functions.get(call.get("id"))
+        threading.Thread(
+            target=_call_host, args=(self, functions, call), name="pynox-host-call", daemon=True
+        ).start()
+
     def tool(self, profile: str | None = None, **options: Any):
         """A ``run_python(code) -> str`` function bound to this pool; see ``pynox.tool``."""
         from pynox._tool import make_tool
@@ -277,9 +312,12 @@ class Pool:
                     report = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                waiter = (
-                    self._pending.pop(report.get("id"), None) if isinstance(report, dict) else None
-                )
+                if not isinstance(report, dict):
+                    continue
+                if report.get("event") == "call":
+                    self._answer_call(report)
+                    continue
+                waiter = self._pending.pop(report.get("id"), None)
                 if waiter is not None:
                     waiter.put(report)
         finally:
@@ -287,6 +325,34 @@ class Pool:
                 pending, self._pending = self._pending, {}
             for waiter in pending.values():
                 waiter.put(None)
+
+
+def _call_host(pool: Pool, functions: Mapping[str, Callable[..., Any]] | None, call: dict) -> None:
+    """Run one host call and send its reply; any exception becomes the error text."""
+    reply: dict[str, Any] = {"call_id": call["call_id"]}
+    function = (functions or {}).get(call.get("function"))
+    if function is None:
+        reply["error"] = f"No host function {call.get('function')!r} is registered"
+    else:
+        try:
+            result = function(*call.get("args", []), **call.get("kwargs", {}))
+            json.dumps(result)
+            reply["result"] = result
+        except TypeError as error:
+            if "JSON serializable" in str(error):
+                reply["result"] = str(result)
+            else:
+                reply["error"] = f"TypeError: {error}"
+        except Exception as error:  # the host function's failure is the task's HostError
+            reply["error"] = f"{type(error).__name__}: {error}"
+    with pool._lock:
+        process = pool._process
+        if process is not None and process.stdin is not None:
+            try:
+                process.stdin.write(json.dumps({"reply": reply}) + "\n")
+                process.stdin.flush()
+            except (BrokenPipeError, ValueError):
+                pass
 
 
 class Session:
@@ -300,6 +366,7 @@ class Session:
     def __init__(self, pool: Pool, name: str, grants: dict[str, Any]):
         self.pool = pool
         self.name = name
+        self._functions = grants.pop("functions", None)
         self._grants = grants
         self.alive = False
         self.steps = 0
@@ -325,7 +392,11 @@ class Session:
             request["timeout"] = timeout
         if max_output is not None:
             request["max_output"] = max_output
-        result = self.pool.request(request)
+        if self._functions and not self.alive:
+            result = self.pool.request(request, functions=self._functions)
+        else:
+            # Later steps keep the functions declared at creation; only route replies.
+            result = self.pool._request_with_handlers(request, self._functions)
         self.steps += 1
         ended = result.raw.get("session_ended", False) if result.raw else False
         self.alive = result.error is None or result.error.get("type") not in (

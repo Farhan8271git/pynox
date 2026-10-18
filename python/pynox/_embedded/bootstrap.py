@@ -87,8 +87,72 @@ def _pynox_outcome(exc, script, capture):
     }
 
 
-def _pynox_run(script, argv0, args, package_dirs, site_packages, source, module, capture):
+def _pynox_host(names):
+    """Install `pynox_host`, exposing exactly the functions the host declared.
+
+    A call writes one JSON line on the report descriptor and blocks until the
+    host answers on descriptor 4 with `<length>\\n<json>`.
+    """
+    if not names:
+        return
+    import _thread
+
+    lock = _thread.allocate_lock()
+    module = type(sys)("pynox_host")
+    module.__doc__ = "Functions provided by the application that runs this code."
+
+    class HostError(Exception):
+        """The host refused or failed a call."""
+
+    HostError.__module__ = "pynox_host"
+    module.HostError = HostError
+
+    def read_exactly(size):
+        data = bytearray()
+        while len(data) < size:
+            chunk = os.read(4, size - len(data))
+            if not chunk:
+                raise HostError("The host closed the call channel")
+            data += chunk
+        return bytes(data)
+
+    def make(name):
+        def call(*args, **kwargs):
+            import json
+
+            frame = json.dumps(
+                {"pynox_call": {"function": name, "args": args, "kwargs": kwargs}},
+                default=str,
+            ).encode()
+            if len(frame) > 1_000_000:
+                raise HostError("Host call arguments exceed 1 MB")
+            with lock:
+                view = memoryview(frame + b"\n")
+                while view:
+                    view = view[os.write(3, view) :]
+                header = b""
+                while not header.endswith(b"\n"):
+                    header += read_exactly(1)
+                reply = json.loads(read_exactly(int(header)))
+            if reply.get("error") is not None:
+                raise HostError(reply["error"])
+            return reply.get("result")
+
+        call.__name__ = call.__qualname__ = name
+        call.__module__ = "pynox_host"
+        return call
+
+    for name in names:
+        setattr(module, name, make(name))
+    module.__all__ = list(names)
+    sys.modules["pynox_host"] = module
+
+
+def _pynox_run(
+    script, argv0, args, package_dirs, site_packages, source, module, capture, functions
+):
     _pynox_prepare(script, argv0, args, package_dirs, site_packages, source, module)
+    _pynox_host(functions)
     exit_code, error = 0, None
     try:
         if module is not None:
@@ -114,9 +178,10 @@ def _pynox_run(script, argv0, args, package_dirs, site_packages, source, module,
 _session = {}
 
 
-def _pynox_session_start(script, argv0, args, package_dirs, site_packages, capture):
+def _pynox_session_start(script, argv0, args, package_dirs, site_packages, capture, functions):
     """Prepare one `__main__` that every step of a session shares."""
     _pynox_prepare(script, argv0, args, package_dirs, site_packages, "", None)
+    _pynox_host(functions)
     _session["main"] = _pynox_main(script, "")
     _session["capture"] = capture
 

@@ -86,6 +86,13 @@ PYNOX_BIN=$PWD/target/release/pynox uv run python examples/monty_bridge.py
 | Pynox pool | The heavy code | New process per job, forked from a warm template. Reads and writes only where granted; no subprocesses; no network unless granted |
 | Host | The bridge | Decides permissions per call. The model asks "run this"; the host says where |
 
+## Without Monty
+
+If you only need the model's code to call your functions, Pynox can do that by
+itself: `pynox.tool(functions={...})` exposes them inside the sandbox as
+`pynox_host`. Monty adds snapshots and a much smaller interpreter for the glue;
+choose it when pausing and resuming the agent matters.
+
 ## Limits
 
 - Pynox cannot snapshot a running CPython. If the heavy code must survive a

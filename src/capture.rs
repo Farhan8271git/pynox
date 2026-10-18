@@ -1,6 +1,7 @@
 //! Poll all streams and completion together, without a polling sleep or a
 //! reader thread per stream. Large output cannot starve the deadline.
 use crate::{
+    bridge::{Bridge, TaskCalls},
     forkserver::{RunningJob, Template},
     policy::Policy,
     runner::finish,
@@ -84,7 +85,32 @@ impl Stream {
     }
 }
 
-pub fn run(template: &mut Template, policy: &Policy, payload: &[u8]) -> Result<Value> {
+/// Where a task's host calls go: the pool's bridge, the task's ID for the
+/// `call` events, and the function that writes those events to the client.
+pub struct Calls<'a> {
+    pub bridge: &'a Bridge,
+    pub task_id: Value,
+    pub emit: &'a dyn Fn(&Value) -> Result<()>,
+}
+
+/// A task's host-call state and the function that sends its `call` events.
+pub(crate) type ActiveCalls<'a> = (TaskCalls<'a>, &'a dyn Fn(&Value) -> Result<()>);
+
+/// Report capacity: the final report, plus room for one call frame in flight.
+pub(crate) fn report_capacity(policy: &Policy) -> usize {
+    if policy.host_functions.is_empty() {
+        65_536
+    } else {
+        65_536 + 1_048_576
+    }
+}
+
+pub fn run(
+    template: &mut Template,
+    policy: &Policy,
+    payload: &[u8],
+    calls: Option<Calls>,
+) -> Result<Value> {
     let start = Instant::now();
     let (input_read, mut input_write) = pipe()?;
     let (out_read, out_write) = pipe()?;
@@ -98,13 +124,27 @@ pub fn run(template: &mut Template, policy: &Policy, payload: &[u8]) -> Result<V
     ])?;
     drop((input_read, out_write, err_write, report_write));
     input_write.write_all(payload)?;
-    drop(input_write);
+    input_write.write_all(b"\n")?;
     let streams = [
         Stream::new(out_read, policy.max_output)?,
         Stream::new(err_read, policy.max_output)?,
-        Stream::new(report_read, 65_536)?,
+        Stream::new(report_read, report_capacity(policy))?,
     ];
-    collect(template, child, policy, start, streams)
+    // Without host functions the child needs no further input: close it.
+    let calls = match calls {
+        Some(calls) if !policy.host_functions.is_empty() => Some(calls),
+        _ => {
+            drop(input_write);
+            return collect(template, child, policy, start, streams, None);
+        }
+    };
+    let calls = calls.map(|calls| {
+        (
+            TaskCalls::new(calls.bridge, calls.task_id, &input_write),
+            calls.emit,
+        )
+    });
+    collect(template, child, policy, start, streams, calls)
 }
 
 fn collect(
@@ -113,6 +153,7 @@ fn collect(
     policy: &Policy,
     start: Instant,
     mut streams: [Stream; 3],
+    mut calls: Option<ActiveCalls>,
 ) -> Result<Value> {
     let deadline = start + Duration::from_millis(policy.timeout_ms);
     let mut timed_out = false;
@@ -175,7 +216,13 @@ fn collect(
                 stream.read_available()?;
             }
         }
+        if let Some((task, emit)) = calls.as_mut() {
+            for event in task.drain(&mut streams[2].data, policy, false) {
+                emit(&event)?;
+            }
+        }
     }
+    drop(calls);
     let output = streams.map(|stream| (stream.data, stream.truncated));
     let mut result = finish(policy, start, status.unwrap(), timed_out, output);
     result["runtime"]["mode"] = "pool".into();

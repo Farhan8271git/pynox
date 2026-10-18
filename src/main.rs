@@ -4,6 +4,7 @@
 )))]
 compile_error!("Pynox requires Linux on x86_64 or aarch64");
 
+mod bridge;
 mod capture;
 mod config;
 mod forkserver;

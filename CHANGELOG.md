@@ -19,6 +19,11 @@
   BPF without applying it to the Rust test runner.
 - Retain a JSONL pool with clean templates and disposable per-task children;
   accept inline `code` with an optional `name` instead of a script file.
+- Add host functions: a pool request declares `functions`, the code calls
+  them as `pynox_host.NAME(...)`, the pool emits a `call` event and the
+  client's `reply` returns the value; undeclared names never reach the
+  client. `Pool.run(functions=...)` and `pynox.tool(functions=...)` handle
+  the protocol and describe the functions to the model.
 - Add `scripts/benchmark_pool.py` and record pool throughput, latency and
   memory for 1 to 8 workers; throughput scales linearly to about 1,570 small
   jobs per second with 8 workers on the reference host.

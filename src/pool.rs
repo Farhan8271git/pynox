@@ -1,6 +1,7 @@
 pub use crate::forkserver::template_main;
 use crate::{
-    capture,
+    bridge::{self, Bridge, Reply},
+    capture::{self, Calls},
     config::Config,
     forkserver::Template,
     policy::{parse_duration, Grants, Policy, Program},
@@ -65,6 +66,12 @@ struct Request {
     /// Answer with the pool's counters instead of running anything.
     #[serde(default)]
     stats: bool,
+    /// Answer a host call: `{"call_id": n, "result": ...}` or `{"call_id": n, "error": "..."}`.
+    #[serde(default)]
+    reply: Option<Reply>,
+    /// Host functions the code may call through `pynox_host`.
+    #[serde(default)]
+    functions: Vec<String>,
     /// Run in a persistent session of this name: one isolated process whose
     /// `__main__` survives between requests. Created by the first request,
     /// which fixes its permissions; later requests only carry `code`.
@@ -118,6 +125,7 @@ impl Request {
             || self.allow_network.is_some()
             || self.memory.is_some()
             || self.max_file_size.is_some()
+            || !self.functions.is_empty()
             || !self.allow_read.is_empty()
             || !self.allow_write.is_empty()
             || !self.package_dirs.is_empty()
@@ -180,6 +188,8 @@ impl Request {
         if let Some(config) = config {
             config.check_limits(&mut policy)?;
         }
+        bridge::check_names(&self.functions)?;
+        policy.host_functions = self.functions;
         if self.env.values().any(|value| value.contains('\0')) {
             bail!("Environment values cannot contain NUL");
         }
@@ -203,6 +213,7 @@ type Sessions = Arc<Mutex<HashMap<String, SyncSender<Pending>>>>;
 
 /// Drive one session: create it on the first request, run steps, end it on
 /// `close`, a fatal step, idle timeout or pool shutdown.
+#[allow(clippy::too_many_arguments)]
 fn serve_session(
     name: String,
     receiver: Receiver<Pending>,
@@ -211,7 +222,9 @@ fn serve_session(
     settings: Arc<Option<Config>>,
     sessions: Sessions,
     idle: Duration,
+    bridge: Arc<Bridge>,
 ) -> Result<()> {
+    let emit_event = |event: &Value| emit(&writer, event);
     let mut session: Option<Session> = None;
     loop {
         let pending = match receiver.recv_timeout(idle) {
@@ -252,7 +265,12 @@ fn serve_session(
                     };
                     let timeout = timeout.unwrap_or(live.policy.timeout_ms);
                     let max_output = max_output.unwrap_or(live.policy.max_output);
-                    match live.step(&step, timeout, max_output) {
+                    let calls = Calls {
+                        bridge: &bridge,
+                        task_id: pending.id.clone(),
+                        emit: &emit_event,
+                    };
+                    match live.step(&step, timeout, max_output, Some(calls)) {
                         Ok(result) => result,
                         Err(error) => {
                             failure(pending.id.clone(), "PoolWorkerError", format!("{error:#}"))
@@ -290,7 +308,12 @@ fn serve_session(
                         };
                         let timeout = started.policy.timeout_ms;
                         let max_output = started.policy.max_output;
-                        match started.step(&step, timeout, max_output) {
+                        let calls = Calls {
+                            bridge: &bridge,
+                            task_id: pending.id.clone(),
+                            emit: &emit_event,
+                        };
+                        match started.step(&step, timeout, max_output, Some(calls)) {
                             Ok(result) => {
                                 if started.alive() {
                                     session = Some(started);
@@ -492,6 +515,7 @@ pub fn run(options: PoolCli) -> Result<()> {
             None => DEFAULT_SESSION_IDLE_MS,
         });
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
+    let bridge = Arc::new(Bridge::default());
     let session_threads: Arc<Mutex<Vec<thread::JoinHandle<Result<()>>>>> =
         Arc::new(Mutex::new(Vec::new()));
     let (sender, receiver) = mpsc::sync_channel::<Pending>(workers as usize * 2);
@@ -503,7 +527,9 @@ pub fn run(options: PoolCli) -> Result<()> {
             let writer = Arc::clone(&writer);
             let config = Arc::clone(&config);
             let settings = Arc::clone(&settings);
+            let bridge = Arc::clone(&bridge);
             thread::spawn(move || -> Result<()> {
+                let emit_event = |event: &Value| emit(&writer, event);
                 let mut slot = Some(template);
                 loop {
                     let pending = match receiver.lock().unwrap().recv() {
@@ -532,7 +558,17 @@ pub fn run(options: PoolCli) -> Result<()> {
                                 if slot.is_none() {
                                     slot = Some(Template::start(&config)?);
                                 }
-                                capture::run(slot.as_mut().unwrap(), &job.policy, &payload)
+                                let calls = Calls {
+                                    bridge: &bridge,
+                                    task_id: pending.id.clone(),
+                                    emit: &emit_event,
+                                };
+                                capture::run(
+                                    slot.as_mut().unwrap(),
+                                    &job.policy,
+                                    &payload,
+                                    Some(calls),
+                                )
                             })();
                             match outcome {
                                 Ok(result) => result,
@@ -601,6 +637,12 @@ pub fn run(options: PoolCli) -> Result<()> {
             match raw.and_then(serde_json::from_value::<Request>) {
                 Ok(mut request) => {
                     request.id = id.clone();
+                    if let Some(reply) = &request.reply {
+                        if let Err(error) = bridge.reply(reply) {
+                            emit(&writer, &failure(id, "RequestError", format!("{error:#}")))?;
+                        }
+                        continue;
+                    }
                     if request.stats {
                         let mut snapshot = writer.snapshot(sessions.lock().unwrap().len(), workers);
                         snapshot["id"] = id;
@@ -648,12 +690,13 @@ pub fn run(options: PoolCli) -> Result<()> {
                                 mpsc::sync_channel::<Pending>(8);
                             map.insert(name.clone(), session_sender.clone());
                             let handle = thread::spawn({
-                                let (name, writer, config, settings, sessions) = (
+                                let (name, writer, config, settings, sessions, bridge) = (
                                     name.clone(),
                                     Arc::clone(&writer),
                                     Arc::clone(&config),
                                     Arc::clone(&settings),
                                     Arc::clone(&sessions),
+                                    Arc::clone(&bridge),
                                 );
                                 move || {
                                     serve_session(
@@ -664,6 +707,7 @@ pub fn run(options: PoolCli) -> Result<()> {
                                         settings,
                                         sessions,
                                         session_idle,
+                                        bridge,
                                     )
                                 }
                             });

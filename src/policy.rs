@@ -302,6 +302,9 @@ pub struct Policy {
     pub max_file_size: Option<u64>,
     /// Capture output for a JSON result instead of passing it through.
     pub capture: bool,
+    /// Host functions the task may call through `pynox_host` (pool only).
+    #[serde(default)]
+    pub host_functions: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -456,6 +459,7 @@ impl Policy {
             max_output: max_output as usize,
             max_file_size,
             capture,
+            host_functions: Vec::new(),
         })
     }
 }

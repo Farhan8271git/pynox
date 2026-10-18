@@ -32,9 +32,18 @@ frameworks instead of competing with them. Its wheel is tagged per CPython
 minor and embeds a matching CPython, so the sandbox imports the packages of
 the environment that installed it. `examples/agent_tool.py` and
 `examples/monty_bridge.py` use it and run in the test suite. Sessions
-(ADR 005) are exposed as `Pool.session()` and `tool(session=True)`. Next
-contracts, in order: a tool bridge from sandboxed code back to the host, and
-network allowlists by domain.
+(ADR 005) are exposed as `Pool.session()` and `tool(session=True)`.
+
+Host functions let the model's code call the application's own tools, the
+CodeAct pattern: a request declares `functions`; inside the task they exist
+as `pynox_host.NAME`; a call travels as a JSON line on the report descriptor,
+becomes a `call` event for the client and returns the client's `reply`. The
+supervisor checks every call against the declared names, so forged calls
+never reach the client, and bounds each call to 1 MB and each task to 1,000
+calls. The functions run in the client's process, outside the sandbox, which
+is the point: the host decides what they may reach. Waiting for the host
+counts against the task's timeout. Next contract: network allowlists by
+domain.
 
 ## Alternatives considered
 

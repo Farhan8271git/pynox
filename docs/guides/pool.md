@@ -46,6 +46,9 @@ One JSON object per line. Exactly one of `script` and `code` is required.
 | `id` | line number | Copied into the result; assign unique IDs |
 | `profile` | | Named permission set from the configuration; the request's own fields add to it |
 | `session` | | Run in a persistent session of this name; see below |
+| `functions` | `[]` | Host function names the code may call; see below |
+| `reply` | | Answer a host call instead of running code; see below |
+| `stats` | `false` | Answer with the pool's counters; see below |
 | `close` | `false` | With `session`, end the session instead of running code |
 | `code` | | Inline program text. No file, no file access, no `__file__` |
 | `name` | `<code>` | Label for inline code in errors and `sys.argv[0]` |
@@ -158,6 +161,43 @@ for agents that define a variable in one call and use it in the next.
 
 From Python: `Pool.session(**grants)` returns a `Session` with `run` and
 `close`, and `pynox.tool(session=True)` gives a model a stateful tool.
+
+## Host functions
+
+A task can call functions that live in your application, the pattern known as
+CodeAct: the model writes Python that calls your tools directly instead of one
+tool call per turn. Declare the names in the request:
+
+```json
+{"id": "t1", "functions": ["search"], "code": "from pynox_host import search\nprint(search('pynox', limit=2))"}
+```
+
+When the code calls `search`, the pool sends a `call` event and waits:
+
+```json
+{"event": "call", "id": "t1", "call_id": 7, "function": "search", "args": ["pynox"], "kwargs": {"limit": 2}}
+```
+
+Your client runs the function and answers with a `reply` request; the call
+returns that value inside the sandbox:
+
+```json
+{"reply": {"call_id": 7, "result": ["first hit", "second hit"]}}
+{"reply": {"call_id": 7, "error": "backend unavailable"}}
+```
+
+An `error` raises `pynox_host.HostError` with that text. Arguments and results
+are JSON, at most 1 MB each way. Only declared names exist in `pynox_host`; a
+task that forges a call to any other name gets an error and the client never
+sees it. Each task may make 1,000 calls. Time spent waiting for the host counts
+against the task's timeout, and a call left unanswered when the task ends is
+dropped; a late `reply` is a `RequestError`. In a session, the first request
+declares the functions and every step can use them.
+
+From Python, `Pool.run(code, functions={"search": search})` and
+`pynox.tool(functions={...})` do all of this: they declare the names, run the
+callables in your process when the task asks, and put their signatures and
+docstrings in the tool description the model reads.
 
 ## Observability
 

@@ -15,7 +15,7 @@ use std::{
     fs::File,
     io::{BufRead, BufReader, Read},
     mem::MaybeUninit,
-    os::fd::{AsRawFd, FromRawFd},
+    os::fd::{AsRawFd, FromRawFd, IntoRawFd},
     path::Path,
     ptr,
 };
@@ -97,6 +97,10 @@ fn execute(warm: bool) -> Result<i32> {
         let job: Job = serde_json::from_str(&input)?;
         if job.session {
             control = Some(reader);
+        } else if !job.policy.host_functions.is_empty() {
+            // Host replies arrive on descriptor 4; keep it open for the
+            // bootstrap's `pynox_host` module. Nothing else is buffered yet.
+            let _ = reader.into_inner().into_raw_fd();
         }
         (job.policy, Some(job.env), job.session)
     } else {
@@ -110,7 +114,8 @@ fn execute(warm: bool) -> Result<i32> {
     let python = python_info();
     // No caller-provided descriptors beyond stdio, the report and a session's
     // control channel are exposed to user code.
-    let first_closed = if session { 5u32 } else { 4u32 };
+    let keeps_control = session || (warm && !policy.host_functions.is_empty());
+    let first_closed = if keeps_control { 5u32 } else { 4u32 };
     if unsafe { libc::syscall(libc::SYS_close_range, first_closed, u32::MAX, 0u32) } != 0 {
         bail!("close_range failed: {}", std::io::Error::last_os_error());
     }
@@ -146,6 +151,7 @@ fn execute(warm: bool) -> Result<i32> {
             optional(&policy.source)?,
             optional(&policy.module)?,
             py::PyBool_FromLong(policy.capture as libc::c_long),
+            string_list(policy.host_functions.iter().map(String::as_str))?,
         ];
         let result = call_bootstrap(c"_pynox_run", arguments)?;
         let report = to_json(result);
@@ -184,6 +190,7 @@ fn run_session(mut control: BufReader<File>, policy: &Policy, python: &PythonInf
             path_list(&policy.package_dirs)?,
             path_list(&python.site_packages)?,
             py::PyBool_FromLong(policy.capture as libc::c_long),
+            string_list(policy.host_functions.iter().map(String::as_str))?,
         ];
         let started = call_bootstrap(c"_pynox_session_start", arguments)?;
         py::Py_DECREF(started);
