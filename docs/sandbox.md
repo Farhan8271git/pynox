@@ -4,6 +4,7 @@ The sandbox is the default: `pynox script.py` and every `pynox pool` task run
 under it with explicit permissions, and `--no-sandbox` is the only way out. A
 sandbox setup failure never falls back to unrestricted execution. The backend
 supports Linux glibc and musl and needs Landlock ABI >= 3 (kernel 6.2 or newer).
+See [deploy](deploy.md) for what containers and AWS Lambda allow, measured.
 
 Linux Landlock ABI >= 3 mediates reads, writes and truncation. Seccomp denies
 new processes/executables, host IPC, cross-process inspection/signals, metadata

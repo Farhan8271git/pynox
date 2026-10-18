@@ -129,5 +129,6 @@ through 3.15.
 | Guide | Description |
 | --- | --- |
 | [Installation and versions](distribution.md) | Bundles, platforms, Python matrix |
+| [Deploy](deploy.md) | Docker, Kubernetes and Lambda: which kernels can sandbox, measured |
 | [Research provenance](research.md) | Where the earlier experiments live |
 | [Architecture decisions](adr/README.md) | The eleven records behind the design |

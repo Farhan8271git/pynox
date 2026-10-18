@@ -237,6 +237,7 @@ Full documentation lives at **[ferrumio.github.io/pynox](https://ferrumio.github
 - [Commands](docs/usage.md)
 - [Sandbox and permissions](docs/sandbox.md)
 - [Installation and Python versions](docs/distribution.md)
+- [Deploy: Docker, Kubernetes, Lambda](docs/deploy.md)
 - [Performance and compatibility](docs/performance.md)
 - [Architecture decisions](ADR/README.md)
 - [Security scope](SECURITY.md)

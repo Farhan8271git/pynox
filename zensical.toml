@@ -21,6 +21,7 @@ nav = [
   ] },
   { "Install" = [
     "distribution.md",
+    "deploy.md",
   ] },
   { "Project" = [
     "research.md",
