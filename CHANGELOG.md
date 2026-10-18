@@ -19,6 +19,14 @@
   BPF without applying it to the Rust test runner.
 - Retain a JSONL pool with clean templates and disposable per-task children;
   accept inline `code` with an optional `name` instead of a script file.
+- Ship the standard library precompiled in every bundle, with unchecked-hash
+  bytecode that survives archive time normalization: common imports from a
+  read-only bundle drop from 268 ms to 56 ms.
+- Add an AWS Lambda layer (`scripts/lambda_layer.py`, built by CI for glibc
+  bundles): a `provided.al2023` custom runtime whose Runtime API loop uses a
+  plain socket, measured at about 200 ms init; and multi-architecture
+  container images per CPython minor and libc, built from the bundles with
+  no build step and pushed to GHCR by the release workflow.
 - Add host functions: a pool request declares `functions`, the code calls
   them as `pynox_host.NAME(...)`, the pool emits a `call` event and the
   client's `reply` returns the value; undeclared names never reach the

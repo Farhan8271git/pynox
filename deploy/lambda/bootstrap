@@ -1,0 +1,6 @@
+#!/bin/sh
+# AWS Lambda custom runtime entry point, installed at /opt/bootstrap by the
+# Pynox layer. Lambda's kernel cannot run the sandbox (see docs/deploy.md), so
+# the runtime is explicit about running without it.
+set -e
+exec /opt/pynox/bin/pynox --no-sandbox -I /opt/pynox-runtime/runtime.py

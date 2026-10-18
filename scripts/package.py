@@ -91,6 +91,25 @@ def main():
             ignore=shutil.ignore_patterns("out", "__pycache__"),
         )
         patch_loader(bundle / "bin/pynox")
+        # Precompile the standard library. Bundles are installed read-only in
+        # practice, and the sandbox denies writes, so without bytecode every
+        # process recompiles each imported module from source. Unchecked-hash
+        # pyc stays valid although the archive normalizes file times.
+        subprocess.run(
+            [
+                str(bundle / f"python/bin/python{major_minor}"),
+                "-I",
+                "-m",
+                "compileall",
+                "-q",
+                "-j",
+                "0",
+                "--invalidation-mode",
+                "unchecked-hash",
+                str(bundle / f"python/lib/python{major_minor}"),
+            ],
+            check=True,
+        )
         for link in bundle.rglob("*"):
             if link.is_symlink() and not link.resolve().is_relative_to(bundle.resolve()):
                 raise RuntimeError(f"Bundle symlink escapes release: {link}")
@@ -131,6 +150,16 @@ def main():
             "-I",
             "-c",
             f"import ssl, sqlite3, zlib, sys; assert '.'.join(map(str, sys.version_info[:2])) == {major_minor!r}",
+        )
+        # Imports must come from the shipped bytecode, not a fresh compile.
+        run(
+            str(relocated),
+            "--no-sandbox",
+            "-I",
+            "-c",
+            "import importlib.util, json.decoder, os; "
+            "cache = importlib.util.cache_from_source(json.decoder.__file__); "
+            "assert os.path.isfile(cache), cache",
         )
         script = staging / "smoke.py"
         script.write_text(

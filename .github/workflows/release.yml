@@ -40,4 +40,57 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
               --title "Pynox $RELEASE_TAG" --notes-file CHANGELOG.md
           fi
-          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.whl dist/*.sha256 --clobber
+          gh release upload "$RELEASE_TAG" dist/*.tar.gz dist/*.whl dist/*.zip dist/*.sha256 --clobber
+
+  images:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
+        libc: [gnu, musl]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: candidate-linux-${{ matrix.libc }}-*-py${{ matrix.python }}.*
+          path: dist
+          merge-multiple: true
+      - name: Prepare a two-architecture build context
+        run: |
+          abi="cp$(echo "${{ matrix.python }}" | tr -d .)"
+          python3 scripts/image_context.py context dist/pynox-*-"$abi"-linux-${{ matrix.libc }}-x86_64.tar.gz dist/pynox-*-"$abi"-linux-${{ matrix.libc }}-aarch64.tar.gz
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Compute tags
+        id: tags
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          suffix=""
+          base="debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587"
+          if [[ "${{ matrix.libc }}" == musl ]]; then
+            suffix="-alpine"
+            base="alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"
+          fi
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "tags=$image:$version-py${{ matrix.python }}$suffix,$image:py${{ matrix.python }}$suffix" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: context
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            BASE=${{ steps.tags.outputs.base }}
+            VERSION=${{ steps.tags.outputs.version }}
+            PYTHON=${{ matrix.python }}

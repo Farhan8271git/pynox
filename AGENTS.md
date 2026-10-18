@@ -25,6 +25,9 @@ native optimizations, in one Linux binary that also works as `python`.
   `examples/monty_bridge.py` run in the test suite; the pool protocol is a
   public contract and changes need an ADR.
 - Keep Cargo.lock, uv.lock, version metadata, docs and ADRs consistent.
+- Deployment assets live in `deploy/` (Dockerfile, Lambda bootstrap and
+  runtime); they are built by `scripts/image_context.py` and
+  `scripts/lambda_layer.py` and tested in CI.
 - Keep Rust implementation in `src/`, the `pynox` Python package in
   `python/pynox/` and embedded runtime Python in `python/pynox/_embedded/`,
   following pydynox's source layout. Development tooling belongs in `scripts/`.

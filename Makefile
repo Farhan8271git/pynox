@@ -11,8 +11,8 @@ build:
 check:
 	cargo fmt --all -- --check
 	bash scripts/build.sh --check
-	uv run --locked ruff check python tests scripts examples
-	uv run --locked ruff format --check python tests scripts examples
+	uv run --locked ruff check python tests scripts examples deploy
+	uv run --locked ruff format --check python tests scripts examples deploy
 	uv run --locked python scripts/check_metadata.py
 test-rust:
 	bash scripts/build.sh --test

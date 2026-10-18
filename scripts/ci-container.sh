@@ -24,6 +24,11 @@ make bundle
 uv run --locked python scripts/check_install.py
 make wheel
 uv run --locked python scripts/check_wheel.py
+if [[ "$PYNOX_LINUX_FAMILY" == gnu ]]; then
+    # Lambda runs Amazon Linux (glibc); layers come from glibc bundles only.
+    uv run --locked python scripts/lambda_layer.py dist/pynox-*-linux-gnu-*.tar.gz
+fi
 cp dist/*.tar.gz dist/*.whl dist/*.sha256 dist/*.xml /artifacts/
+cp dist/*.zip /artifacts/ 2>/dev/null || true
 # The host can clean its artifacts after a root-owned container build.
 chown "$PYNOX_OUTPUT_OWNER" /artifacts/*

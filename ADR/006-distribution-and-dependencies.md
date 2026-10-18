@@ -25,13 +25,25 @@ directories. The bundle must always work on its own, copied into a container
 image, a read-only filesystem or a Lambda package, without a launcher,
 network or writable state.
 
-Build a wheel per CPython minor and platform from the bundle: the `pynox`
-package, the binary and the matching CPython, tagged `cp3XY-cp3XY-manylinux_2_28`
-or `musllinux_1_2`, with a console script. CI builds and installs it next to
-the bundle. Planned, not shipped: PyPI publication after the first release; a
-launcher that installs and selects bundles per Python version in the style of
+Precompile the bundled standard library with unchecked-hash bytecode, so
+read-only installs and sandboxed runs never recompile it and archive time
+normalization cannot invalidate it.
+
+Derive every other artifact from the bundle. A wheel per CPython minor and
+platform carries the `pynox` package, the binary and the matching CPython,
+tagged `cp3XY-cp3XY-manylinux_2_28` or `musllinux_1_2`, with a console script.
+A Lambda layer per CPython minor and architecture, glibc only, carries a
+custom runtime whose loop speaks the Runtime API over a socket, because
+importing `urllib` cost about 250 ms of cold start. Container images per
+CPython minor and libc copy the bundle onto a pinned Debian or Alpine base
+with no build step, so both architectures build without emulation. CI builds
+wheels and layers next to the bundles and tests them; the release workflow
+uploads them to the draft release and pushes the images to GHCR.
+
+Planned, not shipped: PyPI publication after the first release; a launcher
+that installs and selects bundles per Python version in the style of
 `uv python install`, with downloads manual by default and pinned to the Pynox
-release; official container images per Python version; a Lambda layer.
+release.
 
 ## Alternatives considered
 

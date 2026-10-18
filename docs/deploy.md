@@ -16,40 +16,56 @@ explicitly where the kernel cannot do it.
 | Environment | Kernel | Sandbox | Notes |
 | --- | --- | --- | --- |
 | Your Linux host, VM, EC2 | distribution kernel | yes, if 6.2+ | Where the default mode shines |
-| Docker on such a host | host kernel | yes, with a seccomp profile that allows `landlock_*` | Docker's default profile may block them; see below |
+| Docker on such a host | host kernel | yes, with Docker's default seccomp profile (Docker 25, measured) | Older engines or custom profiles may block Landlock; check with `pynox doctor` |
 | Kubernetes | node kernel | same as Docker, per node | Check nodes with `pynox doctor` |
 | AWS Lambda, `provided.al2023` arm64 | 5.10 (measured 2026-10-18) | **no** | Landlock `ENOSYS`; `prctl` and `pidfd_open` blocked; see below |
 | AWS Fargate | Firecracker guest kernel | expect no; verify | Same family as Lambda |
 
 ## Docker
 
-```dockerfile
-FROM debian:bookworm-slim
-ADD https://github.com/ferrumio/pynox/releases/download/v0.1.0/pynox-0.1.0-cp312-linux-gnu-x86_64.tar.gz /tmp/pynox.tgz
-RUN tar -xzf /tmp/pynox.tgz -C /opt \
- && ln -s /opt/pynox-0.1.0-cp312-linux-gnu-x86_64/bin/pynox /usr/local/bin/pynox \
- && rm /tmp/pynox.tgz
-COPY . /app
-WORKDIR /app
-CMD ["pynox", "pool", "--config", "/app/pynox.toml"]
+Each release publishes images per CPython minor and libc, for `linux/amd64`
+and `linux/arm64`:
+
+```text
+ghcr.io/ferrumio/pynox:0.1.0-py3.12           Debian bookworm-slim, glibc
+ghcr.io/ferrumio/pynox:0.1.0-py3.12-alpine    Alpine 3.22, musl
+ghcr.io/ferrumio/pynox:py3.12                 latest release for that Python
 ```
 
-Pick the bundle for your base image: glibc 2.28+ for Debian, Ubuntu, Amazon
-Linux and RHEL-family images; musl 1.2+ for Alpine. The container itself can
-be read-only.
+The image is the base plus the bundle in `/opt/pynox`, nothing else: no build
+step runs inside it. The entry point is `pynox`, the working directory `/app`
+and the user an unprivileged `65532`.
 
-Docker applies its own seccomp profile to the container. Pynox's sandbox makes
-the `landlock_create_ruleset`, `landlock_add_rule`, `landlock_restrict_self`,
-`seccomp` and `prctl` calls, and `pidfd_open` in the supervisor. If
-`pynox doctor` inside the container shows `landlock_abi: -1` while the host
-kernel is 6.2+, the profile is blocking them. Pynox's own CI runs its
-containers with `--security-opt seccomp=unconfined` for this reason; a custom
-profile that allows those syscalls is the narrower option. Running the
-container as a non-root user is fine: Landlock and seccomp need no privilege.
+```bash
+docker run --rm -v "$PWD:/app:ro" ghcr.io/ferrumio/pynox:0.1.0-py3.12 job.py
+docker run --rm -i --read-only ghcr.io/ferrumio/pynox:0.1.0-py3.12 pool --workers=4
+```
 
-Run the pool with `--log=json` and ship container stderr to your log system;
-poll `{"stats": true}` for health and counters. See
-[observability](guides/pool.md#observability).
+Build your own on top, with your dependencies:
+
+```dockerfile
+FROM ghcr.io/ferrumio/pynox:0.1.0-py3.12
+COPY --chown=65532:65532 . /app
+CMD ["pool", "--config", "/app/pynox.toml"]
+```
+
+Measured on 2026-10-18 with Docker 25.0.16 on Linux 6.18 (arm64), with the
+default seccomp profile and no extra flags: `pynox doctor` reports
+`sandbox_supported: true`, sandboxed scripts run, a readable file outside the
+grants is denied while `--no-sandbox` reads it, and the pool works on a
+read-only root filesystem. Landlock and seccomp need no privilege, so the
+non-root user is enough. Older Docker engines and custom profiles may still
+block the Landlock calls; `pynox doctor` names the blocked interface. Pynox's
+own CI runs its build containers with `seccomp=unconfined` because it builds
+and tests there, not because the runtime needs it.
+
+`deploy/docker/Dockerfile` and `scripts/image_context.py` build the same image
+from local bundles:
+
+```bash
+python scripts/image_context.py ctx dist/pynox-0.1.0-cp312-linux-gnu-*.tar.gz
+docker buildx build --platform linux/amd64,linux/arm64 -t pynox:py3.12 ctx
+```
 
 ## Kubernetes
 
@@ -60,10 +76,8 @@ syscalls are allowed. Managed node images vary: check, do not assume.
 
 ## AWS Lambda
 
-Measured on 2026-10-18 in `eu-west-2` with a `provided.al2023` arm64
-function, 1769 MB, and the `cp311-linux-gnu-aarch64` bundle as the runtime
-(a `bootstrap` script that executes
-`pynox --no-sandbox runtime.py`, a 20-line Runtime API loop):
+Lambda's kernel cannot run the sandbox, measured on 2026-10-18 in `eu-west-2`
+with a `provided.al2023` arm64 function:
 
 | Probe | Result |
 | --- | --- |
@@ -73,35 +87,53 @@ function, 1769 MB, and the `cp311-linux-gnu-aarch64` bundle as the runtime
 | `pidfd_open`, `close_range` | `ENOSYS` |
 | `unshare(CLONE_NEWUSER)` | `EPERM` |
 
-So `pynox script.py` and `pynox pool` cannot start there: the supervisor's
-`prctl` is refused before any policy exists, and Landlock is absent. Pynox
-reports this and exits 125. `pynox --no-sandbox` works, and the bundle fits a
-zip package (about 62 MB zipped, 98 MB unpacked, under the 250 MB limit) or a
-container image. Lambda already isolates each function in its own microVM; the
-practical pattern for agent code is a dedicated function per trust level.
+So `pynox script.py` and `pynox pool` cannot start there, and `pynox doctor`
+lists all three reasons. Lambda already isolates each function in a microVM;
+the pattern for agent code is a dedicated function per trust level. What
+Pynox brings to Lambda is the runtime.
 
-What Pynox adds on Lambda is the runtime, not the sandbox. Against the
-bundled `python3.11` in the same function, p50 of seven runs each:
+### The layer
 
-| Workload | `python3.11` | `pynox --no-sandbox` |
-| --- | ---: | ---: |
-| Hello | 14.85 ms | 15.46 ms |
-| 200k-iteration loop | 35.71 ms | 38.15 ms |
-| JSON pipeline, 3.89 MiB | 350.05 ms | 205.06 ms |
+Each release ships `pynox-lambda-layer-<version>-cp3XY-<arch>.zip`. It
+unpacks to `/opt/pynox`, `/opt/bootstrap` and `/opt/pynox-runtime`, a custom
+runtime that runs your `_HANDLER` (`module.function`) on Pynox without the
+sandbox, with the `(event, context)` signature of the managed Python runtimes.
+The layer leaves out what a function cannot use: Tk, IDLE, ensurepip, C
+headers, pip and setuptools.
 
-Lambda CPU is slower than a laptop core, which is why every number is higher
-than on the [performance page](performance.md); the ratios match: within a
-few percent on plain Python, 1.7× on the JSON pipeline.
-
-A `bootstrap` for a zip package:
-
-```sh
-#!/bin/sh
-set -e
-cd "$LAMBDA_TASK_ROOT"
-exec "$LAMBDA_TASK_ROOT/pynox/bin/pynox" --no-sandbox "$LAMBDA_TASK_ROOT/runtime.py"
+```bash
+aws lambda publish-layer-version --layer-name pynox-py311-arm64 \
+  --content S3Bucket=my-bucket,S3Key=pynox-lambda-layer-0.1.0-cp311-arm64.zip \
+  --compatible-runtimes provided.al2023 --compatible-architectures arm64
+aws lambda create-function --function-name my-fn --runtime provided.al2023 --architectures arm64 \
+  --handler handler.handler --zip-file fileb://function.zip --role "$ROLE_ARN" \
+  --layers arn:aws:lambda:REGION:ACCOUNT:layer:pynox-py311-arm64:1
 ```
 
-Expect Lambda's kernel to change without notice; run `pynox doctor` in a test
-invocation when you upgrade, and keep `--no-sandbox` explicit in the command so
-a future kernel with Landlock does not silently change the function's behavior.
+`function.zip` holds only your code; dependencies go in it or in another layer,
+built for the same CPython minor and architecture. `scripts/lambda_layer.py`
+builds the layer from a local glibc bundle.
+
+### How it compares
+
+Same handler on both, 1024 MB, arm64, writing 20,000 records with `json.dump`
+to `/tmp`; four cold starts for the layer, three for the managed runtime:
+
+| | Pynox layer | Managed `python3.11` |
+| --- | ---: | ---: |
+| Init duration, cold | 181–218 ms | 57–75 ms |
+| Handler duration, warm | 18–52 ms | 130–176 ms |
+| `json.dump` inside the handler, warm | 30–47 ms | 124–168 ms |
+| Max memory used | 49 MB | 39 MB |
+
+The managed runtime starts faster: its files are cached on Lambda's hosts,
+while a layer's files are read for the first time on every cold start. The
+layer's runtime loop speaks the Runtime API over a plain socket for that
+reason; with `urllib` its init measured about 450 ms. Pynox runs the work
+faster, here 4× on `json.dump`, so whether a cold invocation is faster
+overall depends on the handler. For this one, init plus execution was about
+240 ms with the layer and 250–330 ms with the managed runtime.
+
+Expect Lambda's kernel to change without notice; keep `--no-sandbox`
+explicit, which the layer's bootstrap does, so a future kernel with Landlock
+does not silently change a function's behavior.
