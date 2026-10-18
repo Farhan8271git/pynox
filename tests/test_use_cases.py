@@ -53,5 +53,8 @@ class UseCaseTests(unittest.TestCase):
 
     def test_api_agent_needs_the_network_grant_and_gets_the_key_from_the_host(self):
         outcome = api_agent.run()
-        self.assertIn("Operation not permitted", outcome["offline"])
+        # The denial surfaces as URLError(EPERM) or PermissionError(EACCES),
+        # depending on where the socket call is refused; both are a denial.
+        self.assertRegex(outcome["offline"], r"Operation not permitted|Permission denied")
+        self.assertNotIn("Lisbon", outcome["offline"])
         self.assertEqual(outcome["online"], "{'city': 'Lisbon', 'temp_c': 21}\n")

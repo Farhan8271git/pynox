@@ -172,6 +172,10 @@ fetch  →  {'city': 'Lisbon', 'temp_c': 21}
 think  →  URLError: <urlopen error [Errno 1] Operation not permitted>
 ```
 
+Depending on the platform, the denial can also arrive as
+`PermissionError: [Errno 13] Permission denied`; either way the socket never
+opens.
+
 Network access is all or nothing today: a tool with the grant can reach any
 IPv4/IPv6 host, though never a subprocess or a host Unix socket. Give it only
 to the tools that need it. Per-domain allowlists are planned.
