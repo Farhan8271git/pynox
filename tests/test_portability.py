@@ -14,6 +14,8 @@ class PortabilityTests(unittest.TestCase):
         doctor = json.loads(subprocess.check_output([runtime.BINARY, "doctor"]))
         self.assertTrue(doctor["runtime_supported"])
         self.assertIn("sandbox_supported", doctor)
+        self.assertIsInstance(doctor["sandbox_unavailable_reasons"], list)
+        self.assertEqual(doctor["sandbox_supported"], not doctor["sandbox_unavailable_reasons"])
         self.assertIn(doctor["platform"].rsplit("-", 1)[0], ("linux-gnu", "linux-musl"))
         self.assertTrue(doctor["platform"].endswith(f"-{doctor['architecture']}"))
 

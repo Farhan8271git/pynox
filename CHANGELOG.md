@@ -20,8 +20,9 @@
 - Apply a bounded `json.dump` fast path transparently, installed lazily when the
   application imports `json`; `--optimize-json` and the pool's `optimize_json`
   field no longer exist.
-- Keep `pynox doctor` as the capability probe, reporting runtime and sandbox
-  support separately.
+- Keep `pynox doctor` as the capability probe: it reports runtime and sandbox
+  support separately and lists why the sandbox cannot run (Landlock, `prctl`,
+  `pidfd_open`), as measured on AWS Lambda.
 - Report Pynox and the loaded CPython runtime together in `--version` / `-V`.
 - Keep flags after the script in Python's arguments, preventing them from
   changing runtime permissions or limits.

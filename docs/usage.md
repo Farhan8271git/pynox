@@ -121,9 +121,11 @@ tool for a model see [Agents](guides/agents.md).
 
 ## Diagnostics
 
-`pynox doctor` prints build Python, architecture, platform tag, a Landlock
-availability probe and separate `runtime_supported` / `sandbox_supported`
-capabilities. Actual sandboxed execution still checks all sandbox setup steps.
+`pynox doctor` prints build Python, architecture, platform tag, the Landlock
+ABI, and `sandbox_supported` with `sandbox_unavailable_reasons`: it probes
+Landlock, `prctl` and `pidfd_open` without changing its own process, so a
+hardened container or AWS Lambda is diagnosed before a run fails. Actual
+sandboxed execution still checks all sandbox setup steps.
 `--version` and `-V` report both Pynox and the loaded CPython runtime, without
 initializing Python:
 

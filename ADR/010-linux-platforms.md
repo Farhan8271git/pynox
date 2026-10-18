@@ -22,7 +22,10 @@ musllinux_1_2 images, audit glibc symbol requirements across the whole
 bundle against 2.28 and link musl dynamically for CPython and extensions.
 
 Kernel requirements are independent of the libc baseline: the sandbox needs
-Landlock ABI >= 3; the default mode runs on any supported userspace.
+Landlock ABI >= 3 and reachable `prctl`, `seccomp` and `pidfd_open`;
+`--no-sandbox` runs on any supported userspace. Deployment environments are
+verified by measurement, not assumed: `docs/deploy.md` records what Docker,
+Kubernetes and AWS Lambda allow, and `pynox doctor` reports it per host.
 
 ## Alternatives considered
 

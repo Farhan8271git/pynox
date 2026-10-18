@@ -171,23 +171,14 @@ fn run_python(mut arguments: Vec<std::ffi::OsString>) -> Result<i32> {
 }
 
 pub fn doctor() -> i32 {
-    let abi = unsafe {
-        libc::syscall(
-            libc::SYS_landlock_create_ruleset,
-            std::ptr::null::<u8>(),
-            0usize,
-            1u32,
-        )
-    };
     let python = python_info();
     let runtime_available = python.stdlib.is_dir() && python.executable.is_file();
-    let sandbox_available = abi >= 3;
     let family = if cfg!(target_env = "musl") {
         "linux-musl"
     } else {
         "linux-gnu"
     };
-    let note = "Landlock probe only; run a sandboxed script to verify complete sandbox setup.";
+    let (abi, reasons) = sandbox_probe();
     println!(
         "{}",
         serde_json::json!({
@@ -197,8 +188,9 @@ pub fn doctor() -> i32 {
             "platform": format!("{family}-{}", std::env::consts::ARCH),
             "landlock_abi": abi, "supported": runtime_available,
             "runtime_supported": runtime_available,
-            "sandbox_supported": sandbox_available,
-            "note": note
+            "sandbox_supported": reasons.is_empty(),
+            "sandbox_unavailable_reasons": reasons,
+            "note": "Kernel probes only; a sandboxed run still verifies the complete policy setup."
         })
     );
     if runtime_available {
@@ -206,4 +198,48 @@ pub fn doctor() -> i32 {
     } else {
         125
     }
+}
+
+/// Probe the kernel interfaces the sandbox needs, without changing this
+/// process. Returns the Landlock ABI and the human-readable reasons the
+/// sandbox cannot run here, empty when it can. Each reason names the
+/// interface, so a blocked environment such as a hardened container or AWS
+/// Lambda is diagnosed before a task fails.
+fn sandbox_probe() -> (i64, Vec<String>) {
+    let mut reasons = Vec::new();
+    let abi = unsafe {
+        libc::syscall(
+            libc::SYS_landlock_create_ruleset,
+            std::ptr::null::<u8>(),
+            0usize,
+            1u32,
+        )
+    };
+    if abi < 3 {
+        reasons.push(match abi {
+            -1 => format!(
+                "Landlock is unavailable ({}); kernel 6.2 or newer with the Landlock LSM is required",
+                std::io::Error::last_os_error()
+            ),
+            _ => format!("Landlock ABI {abi} is too old; ABI 3 (kernel 6.2) is required"),
+        });
+    }
+    // prctl is used for PR_SET_DUMPABLE, PR_SET_NO_NEW_PRIVS and PR_SET_PDEATHSIG.
+    // A read-only query shows whether the call is reachable at all.
+    if unsafe { libc::prctl(libc::PR_GET_DUMPABLE, 0, 0, 0, 0) } < 0 {
+        reasons.push(format!(
+            "prctl is blocked ({}); the environment's own seccomp policy denies it",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let pidfd = unsafe { libc::syscall(libc::SYS_pidfd_open, libc::getpid(), 0) };
+    if pidfd < 0 {
+        reasons.push(format!(
+            "pidfd_open is unavailable ({}); kernel 5.3 or newer is required",
+            std::io::Error::last_os_error()
+        ));
+    } else {
+        unsafe { libc::close(pidfd as libc::c_int) };
+    }
+    (abi, reasons)
 }

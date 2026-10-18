@@ -54,7 +54,12 @@ hold only trusted setup. Workers run in UTF-8 mode like stock CPython under
 The default costs a supervised worker: about 2.5 ms over `python` on a tiny
 script, measured, and documented rather than hidden. Scripts that read or
 write outside their directory need grants, and `pynox.toml` exists so a
-project states them once. Linux kernel 6.2 or newer is required for the
-default mode; older kernels must use `--no-sandbox` explicitly. Metadata
-visibility, persistent writes and the absence of domain allowlists remain
-disclosed limits. Full hostile-code containment is not claimed.
+project states them once. The default mode needs Linux 6.2 or newer and an
+environment that lets an unprivileged process call `prctl`, `seccomp` and
+`pidfd_open`; `pynox doctor` probes these and lists the reasons when the
+sandbox cannot run. Measured on 2026-10-18, AWS Lambda offers neither (kernel
+5.10, `prctl` denied), so there and in similar microVM services the command
+must be `--no-sandbox` explicitly, and the platform's own isolation is the
+boundary. Metadata visibility, persistent writes and the absence of domain
+allowlists remain disclosed limits. Full hostile-code containment is not
+claimed.

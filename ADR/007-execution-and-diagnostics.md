@@ -29,8 +29,10 @@ are long options CPython does not use, so they can precede Python's.
 
 In the sandbox the program is a script, `-c` or `-m`; isolation and buffering
 options are accepted as no-ops, other interpreter options are refused with a
-pointer to `--no-sandbox`. `pynox doctor` reports runtime metadata and a
-Landlock probe with `sandbox_supported` separate from `runtime_supported`.
+pointer to `--no-sandbox`. `pynox doctor` reports runtime metadata, probes
+Landlock, `prctl` and `pidfd_open` without changing its own process, and
+returns `sandbox_supported` with `sandbox_unavailable_reasons`, separate from
+`runtime_supported`, so a blocked environment is diagnosed before a task fails.
 
 ## Alternatives considered
 

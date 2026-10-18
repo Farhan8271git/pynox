@@ -21,8 +21,14 @@ test relocation and actual sandbox setup before archiving.
 Install versioned directories and switch the CLI symlink after verification.
 Keep Pynox and Python versions distinct. Dependency resolution stays with
 existing tools; sandboxed jobs receive explicit installed package
-directories. A `pip install pynox` package that only delivers the binary, as
-uv does, is the planned distribution channel for framework integrations.
+directories. The bundle must always work on its own, copied into a container
+image, a read-only filesystem or a Lambda package, without a launcher,
+network or writable state.
+
+Planned, not shipped: a `pip install pynox` package delivering a small
+launcher that installs and selects bundles per Python version in the style of
+`uv python install`, with downloads manual by default and pinned to the
+Pynox release; official container images per Python version; a Lambda layer.
 
 ## Alternatives considered
 
